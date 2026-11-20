@@ -3,5 +3,8 @@ compatibility_date = "2026-11-19"
 pages_build_output_dir = "."
 
 [vars]
-# Set XANDESK_API to the HTTPS URL of your account/device/session backend.
+# These Supabase Auth settings are public client configuration.
+XANDESK_SUPABASE_URL = "https://sgqiynszzggnfzjsncyl.supabase.co"
+XANDESK_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_gEifLcFwIi6C-zfuyrPfUQ_gMQpbrj3"
+# Set XANDESK_API when the separate XanDesk device/session backend is deployed.
 XANDESK_API = ""

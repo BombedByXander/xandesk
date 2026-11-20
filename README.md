@@ -68,7 +68,7 @@ Set the host's connection server to `https://desk.example.com`. The host initiat
 
 ## Cloudflare Pages integration
 
-The XanDesk Pages frontend is in `web/`. Connect the repository with project root `arcdesk/web` and no build command. Set `XANDESK_API` in Pages to the account API origin, and `XANDESK_SITE_URL` on the host to the published Pages URL if it differs from `https://xandesk.pages.dev`. Read [SETUP-PAGES.md](SETUP-PAGES.md) for deployment details and the account/device API contract. Persistent account auth, device enrollment, and session authorization endpoints are not implemented by the current Rust relay.
+The XanDesk Pages frontend is in `web/`. Connect the repository with project root `arcdesk/web` and no build command. The provided Supabase URL and publishable key are configured in `web/wrangler.toml`; configure the Supabase Auth site URL and redirect allow-list as described in [SETUP-PAGES.md](SETUP-PAGES.md). Set `XANDESK_API` in Pages to the account/device API origin when that service is deployed, and `XANDESK_SITE_URL` on the host to the published Pages URL if it differs from `https://xandesk.pages.dev`. Supabase handles account signup and password sign-in; device enrollment and session authorization endpoints are not implemented by the current Rust relay.
 
 ## Verification
 
