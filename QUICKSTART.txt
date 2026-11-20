@@ -3,9 +3,10 @@ XanDesk Windows preview
 1. Keep all EXE and DLL files together in this folder.
 2. Run arcdesk-relay.exe first and leave its console open. It must say it is listening on 127.0.0.1:8787. If this process is not running, XanDesk will report "actively refused" (Windows error 10061).
 3. Run XanDesk.exe with Connection server set to http://localhost:8787, then click Start sharing.
-4. Click Copy pairing link and open it in Chrome on the SAME PC for a local test.
-5. Approve the connection in the host window.
-6. Stop sharing in the host when finished.
+4. Start sharing; copy the 12-character pairing code shown in the host app.
+5. Open the XanDesk site on the SAME PC for a local test and enter that code.
+6. Approve the connection in the host window.
+7. Stop sharing in the host when finished.
 
 For another device or internet access, deploy the connection server behind HTTPS
 and configure TURN. A Cloudflare Pages website alone does not run this signaling
@@ -14,8 +15,8 @@ localhost links only work on the host computer itself. See README.md and
 SETUP-PAGES.md for deployment details.
 
 To connect while away, select the away-access checkbox BEFORE starting sharing.
-Keep the private pairing link secret. Windows must stay awake and unlocked.
-Stopping sharing invalidates the link. This preview does not run as a service.
+Keep the pairing code secret. Windows must stay awake and unlocked. Stopping
+sharing invalidates the code. This preview does not run as a service.
 
 This is an early Rust implementation, not full DextraDesk feature parity.
 Screen video, keyboard/mouse, optional text clipboard, and live FPS are included.

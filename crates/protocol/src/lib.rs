@@ -14,8 +14,14 @@ pub struct IceServer {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Signal {
-    Register { room: String, token: String },
+    Register {
+        room: String,
+        token: String,
+        #[serde(default)]
+        pairing_code: String,
+    },
     Join { room: String, token: String },
+    Pair { pairing_code: String },
     Registered { ice_servers: Vec<IceServer> },
     Request,
     Approve,

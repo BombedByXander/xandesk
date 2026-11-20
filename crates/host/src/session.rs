@@ -63,6 +63,7 @@ pub async fn run(
     url: url::Url,
     room: String,
     token: String,
+    pairing_code: String,
     bitrate: u32,
     clipboard: bool,
     away_access: bool,
@@ -74,7 +75,7 @@ pub async fn run(
         .context("Server connection timed out")??;
     let (mut sink, mut stream) = socket.split();
     sink.send(Message::Text(
-        serde_json::to_string(&Signal::Register { room, token })?.into(),
+        serde_json::to_string(&Signal::Register { room, token, pairing_code })?.into(),
     ))
     .await?;
     let mut ice = Vec::new();
@@ -138,7 +139,7 @@ pub async fn run(
                         _=>continue,
                     };
                     match serde_json::from_str::<Signal>(&text)? {
-                        Signal::Registered {ice_servers}=>{ice=ice_servers;status.lock().unwrap().message="Online. Copy a pairing link to your other device.".into();}
+                        Signal::Registered {ice_servers}=>{ice=ice_servers;status.lock().unwrap().message="PC paired and ready. Enter the pairing code on the XanDesk website.".into();}
                         Signal::Request=>{
                             if away_access {
                                 approved=true; session_deadline=Some(Instant::now());

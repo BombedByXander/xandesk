@@ -18,6 +18,7 @@ use tokio::sync::{mpsc, Mutex, Semaphore};
 type Tx = mpsc::Sender<Signal>;
 struct Room {
     digest: [u8; 32],
+    pairing_digest: Option<[u8; 32]>,
     host: Tx,
     viewer: Option<Tx>,
     approved: bool,
@@ -120,12 +121,32 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
     let Ok(signal) = serde_json::from_str::<Signal>(&text) else {
         return;
     };
-    let (room_id, token, is_host) = match signal {
-        Signal::Register { room, token } => (room, token, true),
-        Signal::Join { room, token } => (room, token, false),
+    let (room_id, token, is_host, pairing_code) = match signal {
+        Signal::Register { room, token, pairing_code } => (room, token, true, Some(pairing_code)),
+        Signal::Join { room, token } => (room, token, false, None),
+        Signal::Pair { pairing_code } => {
+            let Some(code) = normalize_pairing_code(&pairing_code) else { return };
+            let digest: [u8; 32] = Sha256::digest(code.as_bytes()).into();
+            let rooms = app.rooms.lock().await;
+            let room_id = rooms.iter().find_map(|(id, room)| {
+                room.pairing_digest
+                    .as_ref()
+                    .filter(|known| bool::from(known.ct_eq(&digest)))
+                    .map(|_| id.clone())
+            });
+            drop(rooms);
+            let Some(room_id) = room_id else {
+                send(&mut socket, &Signal::Error { message: "Pairing code is invalid or the PC is offline.".into() }).await;
+                return;
+            };
+            (room_id, String::new(), false, Some(code))
+        }
         _ => return,
     };
-    if !valid_credentials(&room_id, &token) {
+    let pairing_code_valid = pairing_code.as_ref().and_then(|code| normalize_pairing_code(code)).is_some();
+    let has_pairing_code = pairing_code.as_ref().is_some_and(|code| !code.is_empty());
+    if (is_host && has_pairing_code && !pairing_code_valid) ||
+        (!valid_credentials(&room_id, &token) && !(pairing_code_valid && !is_host && token.is_empty())) {
         return;
     }
     let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
@@ -136,10 +157,19 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
             if rooms.contains_key(&room_id) {
                 false
             } else {
+                let pairing_digest: Option<[u8; 32]> = pairing_code.as_ref().and_then(|code| {
+                    normalize_pairing_code(code).map(|normalized| Sha256::digest(normalized.as_bytes()).into())
+                });
+                if pairing_digest.as_ref().is_some_and(|candidate| rooms.values().any(|room| {
+                    room.pairing_digest.as_ref().is_some_and(|known| bool::from(known.ct_eq(candidate)))
+                })) {
+                    return;
+                }
                 rooms.insert(
                     room_id.clone(),
                     Room {
                         digest,
+                        pairing_digest,
                         host: tx.clone(),
                         viewer: None,
                         approved: false,
@@ -148,7 +178,15 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                 true
             }
         } else if let Some(room) = rooms.get_mut(&room_id) {
-            if bool::from(room.digest.ct_eq(&digest))
+            let authorized = if token.is_empty() {
+                pairing_code.as_ref().and_then(|code| normalize_pairing_code(code)).and_then(|code| {
+                    let presented: [u8; 32] = Sha256::digest(code.as_bytes()).into();
+                    room.pairing_digest.as_ref().map(|known| bool::from(known.ct_eq(&presented)))
+                }).unwrap_or(false)
+            } else {
+                bool::from(room.digest.ct_eq(&digest))
+            };
+            if authorized
                 && room.viewer.is_none()
                 && room.host.try_send(Signal::Request).is_ok()
             {
@@ -230,4 +268,10 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
         room.approved = false;
         let _ = room.host.try_send(Signal::Left);
     }
+}
+
+fn normalize_pairing_code(value: &str) -> Option<String> {
+    let code = value.chars().filter(|c| *c != '-').collect::<String>().to_ascii_uppercase();
+    (code.len() == 12 && code.bytes().all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(&b)))
+        .then_some(code)
 }

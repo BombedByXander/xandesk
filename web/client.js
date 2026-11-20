@@ -5,13 +5,11 @@ const pressedKeys = new Set();
 const screen = $('screen');
 const relayPreferenceKey='xandesk-relay';
 function normalizeRelay(value){const u=new URL(value);if(!['https:','http:'].includes(u.protocol))throw new Error('Use an HTTPS relay URL.');if(u.protocol==='http:'&&!['localhost','127.0.0.1','[::1]'].includes(u.hostname))throw new Error('Remote relay connections require HTTPS.');u.pathname='/';u.search='';u.hash='';return u.origin;}
-let configuredRelay=location.origin;
-try{configuredRelay=normalizeRelay(localStorage.getItem(relayPreferenceKey)||location.origin);}catch{}
-$('server').value=configuredRelay;
+let configuredRelay='';
 const invitation = new URLSearchParams(location.hash.slice(1));
-for (const name of ['room', 'token', 'server']) if (invitation.has(name)) $(name).value = invitation.get(name);
+if(invitation.has('pair'))$('pair-code').value=invitation.get('pair');
+const legacyRoom=invitation.get('room'), legacyToken=invitation.get('token');
 if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-$('server').addEventListener('change',()=>{try{configuredRelay=normalizeRelay($('server').value);localStorage.setItem(relayPreferenceKey,configuredRelay);$('server').value=configuredRelay;}catch(error){status(error.message);}});
 const status = message => { $('status').textContent = message; };
 const signal = packet => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(packet)); };
 const send = packet => {
@@ -27,16 +25,6 @@ function disconnect(message = 'Disconnected. Your PC is no longer being controll
   $('session').hidden = true; $('connect-panel').hidden = false; $('connect').disabled = false;
   $('waiting').hidden = false; status(message);
 }
-function serverOrigin(value) {
-  const endpoint = new URL(value);
-  if (!['https:', 'http:'].includes(endpoint.protocol)) throw new Error('Use an https:// connection server URL.');
-  if (endpoint.protocol === 'http:' && !['localhost','127.0.0.1','[::1]'].includes(endpoint.hostname)) throw new Error('Remote connections require HTTPS.');
-  endpoint.pathname='/'; endpoint.search=''; endpoint.hash=''; return endpoint.origin;
-}
-const initialServer=serverOrigin(location.href);
-if(!localStorage.getItem('arcdesk-server'))localStorage.setItem('arcdesk-server',initialServer);
-try{$('server').value=serverOrigin(localStorage.getItem('arcdesk-server')||initialServer);}catch{$('server').value=initialServer;}
-$('server').addEventListener('change',()=>{try{localStorage.setItem('arcdesk-server',serverOrigin($('server').value));}catch{}});
 function waitForIce(connection) {
   return new Promise((resolve, reject) => {
     if (connection.iceGatheringState === 'complete') return resolve();
@@ -64,17 +52,25 @@ async function makeOffer(iceServers, current) {
   await waitForIce(connection);
   if (current === generation) signal({type:'offer', sdp:connection.localDescription.sdp});
 }
+const relayConfigReady=fetch('/api/config').then(r=>r.ok?r.json():{}).then(config=>{
+  const candidate=config.relayBase||(legacyRoom&&legacyToken?location.origin:'')||configuredRelay||localStorage.getItem(relayPreferenceKey)||(['localhost','127.0.0.1'].includes(location.hostname)?location.origin:'');
+  if(candidate)configuredRelay=normalizeRelay(candidate);
+}).catch(()=>{if(['localhost','127.0.0.1'].includes(location.hostname))configuredRelay=location.origin;});
 $('pair-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (ws) disconnect();
   const current = ++generation;
   try {
-    const endpoint = new URL(serverOrigin($('server').value));
+    await relayConfigReady;
+    if(!configuredRelay)throw new Error('XanDesk is not connected to its public relay yet. Set XANDESK_RELAY in your Pages project after deploying the relay server.');
+    const code=$('pair-code').value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(!(legacyRoom&&legacyToken)&&!/^[A-HJ-NP-Z2-9]{12}$/.test(code))throw new Error('Enter the 12-character pairing code shown in the XanDesk Windows app.');
+    const endpoint = new URL(configuredRelay);
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'; endpoint.pathname = '/ws'; endpoint.search = ''; endpoint.hash = '';
     $('connect').disabled = true; status('Requesting permission from your PC…');
     ws = new WebSocket(endpoint);
     connectTimer = setTimeout(() => disconnect('Connection request expired. Check the host app and try again.'), 120000);
-    ws.onopen = () => signal({type:'join', room:$('room').value, token:$('token').value});
+    ws.onopen = () => signal(legacyRoom&&legacyToken?{type:'join',room:legacyRoom,token:legacyToken}:{type:'pair',pairing_code:code});
     ws.onerror = () => disconnect('Could not reach the connection server. Check its address, HTTPS, and allowed origins.');
     ws.onclose = () => disconnect('The host or connection server disconnected.');
     ws.onmessage = async event => {

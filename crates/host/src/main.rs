@@ -30,6 +30,14 @@ fn random_hex<const N: usize>() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+fn random_pairing_code() -> String {
+    let mut bytes = [0u8; 12];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let alphabet = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code: String = bytes.iter().map(|byte| alphabet[(byte & 31) as usize] as char).collect();
+    format!("{}-{}-{}", &code[..4], &code[4..8], &code[8..12])
+}
+
 struct App {
     runtime: tokio::runtime::Runtime,
     status: Shared,
@@ -37,6 +45,7 @@ struct App {
     server: String,
     room: String,
     token: String,
+    pairing_code: String,
     bitrate: u32,
     allow_clipboard: bool,
     away_access: bool,
@@ -52,9 +61,10 @@ impl App {
                 ..Default::default()
             })),
             commands: None,
-            server: "http://localhost:8787".into(),
+            server: String::new(),
             room: String::new(),
             token: String::new(),
+            pairing_code: String::new(),
             bitrate: 20,
             allow_clipboard: false,
             away_access: false,
@@ -70,6 +80,7 @@ impl App {
         };
         self.room = random_hex::<16>();
         self.token = random_hex::<32>();
+        self.pairing_code = random_pairing_code();
         let (tx, rx) = mpsc::unbounded_channel();
         self.commands = Some(tx);
         *self.status.lock().unwrap() = Status {
@@ -80,6 +91,7 @@ impl App {
         let status = self.status.clone();
         let room = self.room.clone();
         let token = self.token.clone();
+        let pairing_code = self.pairing_code.clone();
         let bitrate = self.bitrate;
         let clipboard = self.allow_clipboard;
         let away_access = self.away_access;
@@ -88,6 +100,7 @@ impl App {
                 base,
                 room,
                 token,
+                pairing_code,
                 bitrate,
                 clipboard,
                 away_access,
@@ -123,29 +136,23 @@ impl eframe::App for App {
             ui.horizontal(|ui| { ui.heading(egui::RichText::new("▣ XanDesk").size(30.0).color(egui::Color32::from_rgb(159,230,196))); ui.label("WINDOWS HOST · PREVIEW"); });
             ui.label("Your PC, within reach."); ui.add_space(20.0);
             ui.add_enabled_ui(!running, |ui| {
-                ui.label("Connection server"); ui.add(egui::TextEdit::singleline(&mut self.server).desired_width(f32::INFINITY));
-                ui.label("Use your deployed HTTPS server, or localhost for a local test.");
+                ui.label("XanDesk relay server"); ui.add(egui::TextEdit::singleline(&mut self.server).hint_text("https://relay.your-domain.example").desired_width(f32::INFINITY));
+                ui.label("Enter the public HTTPS relay address for remote access. For a same-PC test, enter http://localhost:8787.");
                 ui.add_space(12.0);
                 ui.add(egui::Slider::new(&mut self.bitrate, 2..=100).suffix(" Mbps").text("Target video bitrate"));
                 ui.checkbox(&mut self.allow_clipboard, "Allow remote browser to write my text clipboard");
                 ui.checkbox(&mut self.away_access, "Allow my private pairing link to connect while I’m away");
-                if self.away_access { ui.small("Anyone with this link can control the unlocked PC until you stop sharing."); }
+                if self.away_access { ui.small("Anyone with the active pairing code can control the unlocked PC until you stop sharing."); }
             });
             ui.add_space(16.0);
             if running {
                 if ui.add_sized([ui.available_width(),38.0],egui::Button::new("Stop sharing & disconnect").fill(egui::Color32::from_rgb(105,42,50))).clicked() { self.command(Command::Stop); }
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Copy pairing link").clicked() {
-                        if let Ok(mut link) = url::Url::parse(&self.server) {
-                            link.set_path("/"); link.set_query(None);
-                            link.set_fragment(Some(&format!("room={}&token={}",self.room,self.token))); ctx.copy_text(link.to_string());
-                        }
-                    }
-                    if ui.button("Copy PC code").clicked() { ctx.copy_text(self.room.clone()); }
-                    if ui.button("Copy private key").clicked() { ctx.copy_text(self.token.clone()); }
+                    ui.label(egui::RichText::new(format!("Pairing code  {}", self.pairing_code)).size(21.0).strong());
+                    if ui.button("Copy code").clicked() { ctx.copy_text(self.pairing_code.clone()); }
                 });
-                ui.small("Share this link only with someone you want to control your PC.");
+                ui.small("Enter this code on the XanDesk website. It is valid only while sharing is active.");
             } else if ui.add_sized([ui.available_width(),38.0],egui::Button::new("Start sharing").fill(egui::Color32::from_rgb(31,91,68))).clicked() { self.start(); }
             ui.add_space(16.0); ui.separator();
             let s = self.status.lock().unwrap();
