@@ -143,7 +143,7 @@ impl App {
             room: String::new(),
             token: String::new(),
             pairing_code: String::new(),
-            bitrate: 40,
+            bitrate: 80,
             allow_clipboard: false,
             away_access: false,
             _tray: tray,

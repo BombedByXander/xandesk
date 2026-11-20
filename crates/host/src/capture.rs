@@ -1,7 +1,7 @@
 use crate::Shared;
 use anyhow::Context;
 use openh264::{
-    encoder::{BitRate, Encoder, EncoderConfig, FrameRate, Level, Profile, UsageType},
+    encoder::{BitRate, Encoder, EncoderConfig, FrameRate, Level, Profile, UsageType, VuiConfig},
     formats::{BgraSliceU8, YUVBuffer},
     OpenH264API, Timestamp,
 };
@@ -31,6 +31,8 @@ fn encoder(bitrate: u32) -> anyhow::Result<Encoder> {
         .background_detection(false)
         .profile(Profile::Baseline)
         .level(Level::Level_5_1)
+        // RGB-to-YUV conversion above uses BT.601 limited-range coefficients.
+        .vui(VuiConfig::bt601())
         .usage_type(UsageType::ScreenContentRealTime);
     Ok(Encoder::with_api_config(
         OpenH264API::from_source(),
