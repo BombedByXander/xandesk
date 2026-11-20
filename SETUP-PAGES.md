@@ -2,7 +2,9 @@
 
 ## Frontend
 
-In Cloudflare Pages, connect this repository and set the project root to `arcdesk/web`. Use no build command; set the output directory to `.`. The site is static HTML/CSS/JavaScript and includes a Pages `wrangler.toml` plus security `_headers`. Alternatively, upload the contents of `arcdesk/web` as a Direct Upload. Set `XANDESK_API` in the Pages project's environment variables to your HTTPS API origin and deploy again.
+In Cloudflare Pages, connect this repository and set the project root to `arcdesk/web`. Use no build command; set the output directory to `.`. The site is static HTML/CSS/JavaScript and includes a Pages `wrangler.toml`, a Pages Function at `functions/api/config.js`, and security `_headers`. Set `XANDESK_API` in the Pages project's environment variables to your HTTPS API origin and deploy again.
+
+To deploy from the command line instead, install Wrangler with `npm install -g wrangler`, authenticate with `npx wrangler login`, then run `npx wrangler pages deploy . --project-name xandesk` from `arcdesk/web`. Wrangler deploys the Pages Function with the static files. The Cloudflare dashboard's drag-and-drop Direct Upload does not deploy the `functions/` directory.
 
 The browser app expects a backend implementing the contracts below. Until that service is deployed, account pages show a real API-configuration error and do not fabricate devices or sessions. The standalone private pairing viewer still connects to the existing Rust host/relay protocol.
 
