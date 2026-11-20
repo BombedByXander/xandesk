@@ -1,0 +1,23 @@
+XanDesk Windows preview
+
+1. Keep all EXE and DLL files together in this folder.
+2. Run arcdesk-relay.exe. Leave its console open.
+3. Run XanDesk.exe and click Start sharing.
+4. Click Copy pairing link and open it in Chrome on the SAME PC for a local test.
+5. Approve the connection in the host window.
+6. Stop sharing in the host when finished.
+
+For another device or internet access, deploy the connection server behind HTTPS
+and configure TURN. localhost links only work on the host computer itself.
+See README.md, section Internet deployment, and LOVABLE.md for the frontend.
+
+To connect while away, select the away-access checkbox BEFORE starting sharing.
+Keep the private pairing link secret. Windows must stay awake and unlocked.
+Stopping sharing invalidates the link. This preview does not run as a service.
+
+This is an early Rust implementation, not full DextraDesk feature parity.
+Screen video, keyboard/mouse, optional text clipboard, and live FPS are included.
+Audio, controllers, file transfer, account/device login, GPU encoding and
+lock-screen access are not implemented. There are no payment plans or usage timers.
+
+

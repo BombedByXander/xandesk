@@ -1,0 +1,7 @@
+name = "xandesk"
+compatibility_date = "2026-11-19"
+pages_build_output_dir = "."
+
+[vars]
+# Set XANDESK_API to the HTTPS URL of your account/device/session backend.
+XANDESK_API = ""
