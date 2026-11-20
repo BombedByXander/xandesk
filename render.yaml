@@ -20,5 +20,9 @@ services:
           type: web
           name: xandesk-relay
           envVarKey: RENDER_EXTERNAL_URL
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false
       - key: ARCDESK_ICE_SERVERS
         value: '[{"urls":["stun:stun.l.google.com:19302"]}]'

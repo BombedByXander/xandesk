@@ -198,7 +198,7 @@ async fn run_connection(
                         _=>continue,
                     };
                     match serde_json::from_str::<Signal>(&text)? {
-                        Signal::Registered {ice_servers}=>{ice=ice_servers;let mut s=status.lock().unwrap();s.registered=true;s.message="Host online. Choose Pair this PC in the system tray to add it to your account.".into();}
+                        Signal::Registered {ice_servers}=>{let has_turn=ice_servers.iter().any(|server|server.urls.iter().any(|url|url.starts_with("turn:")||url.starts_with("turns:")));ice=ice_servers;let mut s=status.lock().unwrap();s.registered=true;s.message=if has_turn{"Host online. TURN fallback is ready for restrictive networks.".into()}else{"Host online with direct connections only. Add TURN credentials on the relay for restrictive networks.".into()};}
                         Signal::Request=>{
                             if away_access {
                                 approved=true; session_deadline=Some(Instant::now());

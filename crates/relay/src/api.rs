@@ -490,7 +490,7 @@ pub async fn create_session(
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
     };
     let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-    let ice_servers = app.ice.clone();
+    let ice_servers;
     {
         let mut rooms = app.rooms.lock().await;
         let Some(room) = rooms.get_mut(&device.room_id) else {
@@ -507,6 +507,7 @@ pub async fn create_session(
             )
             .into_response();
         }
+        ice_servers = room.ice_servers.clone();
         room.viewer_tokens
             .retain(|_, expiry| *expiry > tokio::time::Instant::now());
         room.viewer_tokens.insert(

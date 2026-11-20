@@ -31,7 +31,7 @@ For the Pages Git project, use:
 
 In Pages project settings, add the environment variable `XANDESK_API` with the relay service's public HTTPS URL, for example `https://xandesk-relay.onrender.com` (use the exact URL Render assigned). Save and redeploy. The Pages config Function reads this setting for device API calls and WebRTC signaling.
 
-The Windows app's **XanDesk relay server** field must use that same URL. It converts HTTPS to WSS automatically. The website and host both initiate outbound internet connections; no router port forwarding or home IP is needed.
+The Windows host already uses the deployed XanDesk relay URL. The website and host both initiate outbound internet connections; no router port forwarding or home IP is needed.
 
 For local Wrangler deployment, run `npx wrangler pages deploy . --project-name xandesk` from the `web` directory. This deploys the Pages Function along with the static site; Cloudflare drag-and-drop upload does not include Functions.
 
@@ -51,6 +51,15 @@ The host identity is stored locally so a computer keeps its account association 
 
 ## Network connectivity
 
-The default ICE configuration includes public STUN, which can establish direct peer-to-peer connections on many networks. For TURN fallback on restrictive firewalls and NATs, set `ARCDESK_ICE_SERVERS` on the relay service to a JSON list containing your TURN provider's server URLs and credentials. TURN credentials must be treated as server secrets and rotated; do not commit them into this repository. Connectivity cannot be guaranteed if a network blocks both direct WebRTC and the configured TURN routes.
+The default ICE configuration includes public STUN, which can establish direct peer-to-peer connections on many networks. STUN alone cannot traverse every NAT or school/public firewall, so add TURN for reliable access across restrictive networks.
+
+For managed Cloudflare TURN:
+
+1. In Cloudflare, create a Realtime TURN key.
+2. Create a scoped API token with **Account → Cloudflare Realtime → Edit** permission.
+3. In Render, set `CLOUDFLARE_TURN_KEY_ID` to the key ID and `CLOUDFLARE_TURN_API_TOKEN` to the token. Keep the token private and never put it in Pages or the Windows app.
+4. Redeploy the relay. The server requests short-lived TURN credentials and passes them to the host and browser; TURN is tried only when a direct route fails.
+
+If those variables are empty, XanDesk falls back to public STUN only. The host status and session error message identify that direct-only mode. Cloudflare Realtime TURN includes a 1,000 GB monthly free tier, then charges for relayed outbound traffic; direct peer-to-peer traffic does not use TURN bandwidth. Connectivity still depends on the network allowing at least one configured ICE route.
 
 Cloudflare Pages serves the site; Render hosts the long-lived Rust service; Supabase provides accounts and the device table. The relay/API source is in `crates/relay/src/`, and the Windows approval and stable host identity are in `crates/host/src/`.

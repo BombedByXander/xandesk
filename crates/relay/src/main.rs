@@ -29,16 +29,57 @@ pub(crate) struct Room {
     pub(crate) pair_claim: Option<oneshot::Sender<bool>>,
     pub(crate) pair_claim_approved: bool,
     pub(crate) device_name: String,
+    pub(crate) ice_servers: Vec<IceServer>,
 }
 pub(crate) struct App {
     pub(crate) rooms: Mutex<HashMap<String, Room>>,
     pub(crate) ice: Vec<IceServer>,
+    pub(crate) turn_key_id: String,
+    pub(crate) turn_api_token: String,
     pub(crate) origins: Vec<String>,
     pub(crate) supabase_url: String,
     pub(crate) supabase_publishable_key: String,
     pub(crate) public_url: String,
     pub(crate) http: reqwest::Client,
     slots: Arc<Semaphore>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnCredentials {
+    ice_servers: Vec<IceServer>,
+}
+
+impl App {
+    pub(crate) async fn issue_ice_servers(&self) -> anyhow::Result<Vec<IceServer>> {
+        if self.turn_key_id.is_empty() && self.turn_api_token.is_empty() {
+            return Ok(self.ice.clone());
+        }
+        anyhow::ensure!(
+            !self.turn_key_id.is_empty() && !self.turn_api_token.is_empty(),
+            "Both CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN are required"
+        );
+        let response = self.http
+            .post(format!(
+                "https://rtc.live.cloudflare.com/v1/turn/keys/{}/credentials/generate-ice-servers",
+                self.turn_key_id
+            ))
+            .bearer_auth(&self.turn_api_token)
+            .json(&serde_json::json!({"ttl": 172800}))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Cloudflare TURN credential request returned HTTP {}",
+            response.status()
+        );
+        let credentials: TurnCredentials = response.json().await?;
+        anyhow::ensure!(
+            credentials.ice_servers.iter().any(|server| server.urls.iter().any(|url| url.starts_with("turn:" ) || url.starts_with("turns:"))),
+            "Cloudflare returned no TURN servers"
+        );
+        Ok(credentials.ice_servers)
+    }
 }
 
 #[tokio::main]
@@ -72,6 +113,8 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(App {
         rooms: Mutex::new(HashMap::new()),
         ice,
+        turn_key_id: std::env::var("CLOUDFLARE_TURN_KEY_ID").unwrap_or_default(),
+        turn_api_token: std::env::var("CLOUDFLARE_TURN_API_TOKEN").unwrap_or_default(),
         origins,
         supabase_url,
         supabase_publishable_key,
@@ -186,6 +229,19 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
     {
         return;
     }
+    let host_ice = if is_host {
+        match app.issue_ice_servers().await {
+            Ok(servers) => Some(servers),
+            Err(error) => {
+                send(&mut socket, &Signal::Error {
+                    message: format!("Could not configure WebRTC relay servers: {error:#}"),
+                }).await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     let (tx, mut rx) = mpsc::channel(16);
     let registered = {
@@ -219,6 +275,7 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                         pair_claim: None,
                         pair_claim_approved: false,
                         device_name,
+                        ice_servers: host_ice.clone().unwrap_or_default(),
                     },
                 );
                 true
@@ -265,7 +322,7 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
     }
     if is_host {
         let _ = tx.try_send(Signal::Registered {
-            ice_servers: app.ice.clone(),
+            ice_servers: host_ice.unwrap_or_default(),
         });
     }
     let (mut sink, mut source) = socket.split();
@@ -296,7 +353,7 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                 let target_and_message = match (is_host, signal) {
                     (true, Signal::Approve) if room.viewer.is_some() && !room.approved => {
                         room.approved = true;
-                        Some((room.viewer.as_ref().unwrap().clone(), Signal::Ready { ice_servers: app.ice.clone() }))
+                        Some((room.viewer.as_ref().unwrap().clone(), Signal::Ready { ice_servers: room.ice_servers.clone() }))
                     }
                     (true, Signal::Reject) => room.viewer.as_ref().map(|v| (v.clone(), Signal::Reject)),
                     (true, Signal::PairApprove) if room.pair_claim.is_some() => {
