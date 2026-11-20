@@ -395,7 +395,7 @@ impl Session {
                 mime_type: MIME_TYPE_H264.into(),
                 clock_rate: 90000,
                 sdp_fmtp_line:
-                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".into(),
+                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e033".into(),
                 ..Default::default()
             },
             "desktop".into(),

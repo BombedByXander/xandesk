@@ -1,7 +1,7 @@
 use crate::Shared;
 use anyhow::Context;
 use openh264::{
-    encoder::{BitRate, Encoder, EncoderConfig, FrameRate, Profile, UsageType},
+    encoder::{BitRate, Encoder, EncoderConfig, FrameRate, Level, Profile, UsageType},
     formats::{BgraSliceU8, YUVBuffer},
     OpenH264API, Timestamp,
 };
@@ -30,6 +30,7 @@ fn encoder(bitrate: u32) -> anyhow::Result<Encoder> {
         .adaptive_quantization(true)
         .background_detection(false)
         .profile(Profile::Baseline)
+        .level(Level::Level_5_1)
         .usage_type(UsageType::ScreenContentRealTime);
     Ok(Encoder::with_api_config(
         OpenH264API::from_source(),
