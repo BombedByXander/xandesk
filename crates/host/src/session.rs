@@ -9,10 +9,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use webrtc::{
     api::{
@@ -75,7 +72,13 @@ pub async fn run(
         .context("Server connection timed out")??;
     let (mut sink, mut stream) = socket.split();
     sink.send(Message::Text(
-        serde_json::to_string(&Signal::Register { room, token, pairing_code })?.into(),
+        serde_json::to_string(&Signal::Register {
+            room,
+            token,
+            device_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows PC".into()),
+            pairing_code,
+        })?
+        .into(),
     ))
     .await?;
     let mut ice = Vec::new();
@@ -84,7 +87,6 @@ pub async fn run(
     let (answers, mut answer_rx) = mpsc::unbounded_channel::<anyhow::Result<String>>();
     let (errors, mut error_rx) = mpsc::unbounded_channel::<String>();
     let mut negotiation: Option<JoinHandle<()>> = None;
-    let mut negotiation_cancel: Option<oneshot::Sender<()>> = None;
     let mut approval_deadline: Option<Instant> = None;
     let mut session_deadline: Option<Instant> = None;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -95,8 +97,9 @@ pub async fn run(
                 _ = tick.tick() => {
                     anyhow::ensure!(last_server.elapsed() < Duration::from_secs(65),"Connection server stopped responding");
                     if approval_deadline.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) {
-                        approval_deadline = None; status.lock().unwrap().pending = false;
-                        sink.send(Message::Text(serde_json::to_string(&Signal::Reject)?.into())).await?;
+                        let pair={let mut s=status.lock().unwrap();let pair=s.pair_pending;s.pending=false;s.pair_pending=false;pair}; approval_deadline = None;
+                        let signal=if pair { Signal::PairReject } else { Signal::Reject };
+                        sink.send(Message::Text(serde_json::to_string(&signal)?.into())).await?;
                     }
                     if session_deadline.is_some_and(|t| t.elapsed() > Duration::from_secs(40)) {
                         if !active.as_ref().is_some_and(|s| s.connected.load(Ordering::Acquire)) { anyhow::bail!("WebRTC connection timed out. Check TURN configuration."); }
@@ -114,6 +117,14 @@ pub async fn run(
                         approval_deadline=None; status.lock().unwrap().pending=false;
                         sink.send(Message::Text(serde_json::to_string(&Signal::Reject)?.into())).await?;
                     }
+                    Some(Command::PairApprove) if status.lock().unwrap().pair_pending => {
+                        approval_deadline=None; { let mut s=status.lock().unwrap();s.pair_pending=false;s.message="PC pairing approved.".into(); }
+                        sink.send(Message::Text(serde_json::to_string(&Signal::PairApprove)?.into())).await?;
+                    }
+                    Some(Command::PairReject) if status.lock().unwrap().pair_pending => {
+                        approval_deadline=None; status.lock().unwrap().pair_pending=false;
+                        sink.send(Message::Text(serde_json::to_string(&Signal::PairReject)?.into())).await?;
+                    }
                     _=>{}
                 },
                 answer = answer_rx.recv() => if let Some(answer) = answer {
@@ -121,8 +132,9 @@ pub async fn run(
                 },
                 error = error_rx.recv() => if let Some(error) = error { anyhow::bail!(error); },
                 _ = async { if let Some(deadline)=approval_deadline { tokio::time::sleep_until(tokio::time::Instant::from_std(deadline + Duration::from_secs(90))).await; } else { std::future::pending::<()>().await; } } => {
-                    approval_deadline=None;status.lock().unwrap().pending=false;
-                    sink.send(Message::Text(serde_json::to_string(&Signal::Reject)?.into())).await?;
+                    let pair={let mut s=status.lock().unwrap();let pair=s.pair_pending;s.pending=false;s.pair_pending=false;pair};approval_deadline=None;
+                    let signal=if pair { Signal::PairReject } else { Signal::Reject };
+                    sink.send(Message::Text(serde_json::to_string(&signal)?.into())).await?;
                 },
                 _ = async { if let Some(deadline)=session_deadline { tokio::time::sleep_until(tokio::time::Instant::from_std(deadline + Duration::from_secs(120))).await; } else { std::future::pending::<()>().await; } } => {
                     if !active.as_ref().is_some_and(|s|s.connected.load(Ordering::Acquire)){anyhow::bail!("ICE could not establish a connection through the configured STUN/TURN servers. Check TURN and network restrictions.");}
@@ -149,6 +161,9 @@ pub async fn run(
                                 let mut s=status.lock().unwrap(); s.pending=true;s.message="Connection approval needed.".into();approval_deadline=Some(Instant::now());
                             }
                         }
+                        Signal::PairRequest=>{
+                            let mut s=status.lock().unwrap();s.pair_pending=true;s.message="Account pairing approval needed.".into();approval_deadline=Some(Instant::now());
+                        }
                         Signal::Offer {sdp} if approved && active.is_none()=>{
                             let session=Session::new(ice.clone(),bitrate,clipboard,true,status.clone(),errors.clone()).await?;
                             let peer=session.peer.clone(); let tx=answers.clone();
@@ -159,7 +174,7 @@ pub async fn run(
                             if let Some(task)=negotiation.take(){task.abort();}
                             if let Some(session)=active.take(){session.close().await;}
                             approved=false;approval_deadline=None;session_deadline=None;
-                            let mut s=status.lock().unwrap();s.pending=false;s.message="Viewer disconnected. Ready for a new request.".into();s.capture_fps=0.0;s.encoded_fps=0.0;
+                            let mut s=status.lock().unwrap();s.pending=false;s.pair_pending=false;s.message="Viewer disconnected. Ready for a new request.".into();s.capture_fps=0.0;s.encoded_fps=0.0;
                         }
                         Signal::Error {message}=>anyhow::bail!(message),
                         _=>{}

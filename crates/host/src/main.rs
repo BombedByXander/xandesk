@@ -5,16 +5,20 @@ mod session;
 
 use eframe::egui;
 use rand::RngCore;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self as std_mpsc, Receiver as TrayReceiver};
+use std::sync::{Arc, Mutex};
 use std::{fs, path::PathBuf};
-use tray_icon::{menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem}, Icon, TrayIcon, TrayIconBuilder};
 use tokio::sync::mpsc;
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    Icon, TrayIcon, TrayIconBuilder,
+};
 
 #[derive(Default)]
 pub struct Status {
     pub message: String,
     pub pending: bool,
+    pub pair_pending: bool,
     pub running: bool,
     pub registered: bool,
     pub capture_fps: f64,
@@ -24,21 +28,56 @@ pub struct Status {
 pub enum Command {
     Approve,
     Reject,
+    PairApprove,
+    PairReject,
     Stop,
 }
 type Shared = Arc<Mutex<Status>>;
 
 fn server_config_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|root| PathBuf::from(root).join("XanDesk").join("relay-url.txt"))
+    std::env::var_os("APPDATA")
+        .map(|root| PathBuf::from(root).join("XanDesk").join("relay-url.txt"))
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct HostIdentity {
+    room: String,
+}
+
+fn host_identity() -> anyhow::Result<HostIdentity> {
+    let root = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("Windows profile directory is unavailable"))?;
+    let dir = root.join("XanDesk");
+    let path = dir.join("host-identity.json");
+    if let Ok(data) = fs::read(&path) {
+        if let Ok(identity) = serde_json::from_slice::<HostIdentity>(&data) {
+            if identity.room.len() == 32 && identity.room.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Ok(identity);
+            }
+        }
+    }
+    fs::create_dir_all(&dir)?;
+    let identity = HostIdentity {
+        room: random_hex::<16>(),
+    };
+    fs::write(path, serde_json::to_vec(&identity)?)?;
+    Ok(identity)
 }
 
 fn load_saved_server() -> String {
-    server_config_path().and_then(|path| fs::read_to_string(path).ok()).unwrap_or_default().trim().to_owned()
+    server_config_path()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
 }
 
 fn save_server(value: &str) {
     if let Some(path) = server_config_path() {
-        if let Some(parent) = path.parent() { let _ = fs::create_dir_all(parent); }
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let _ = fs::write(path, value.trim());
     }
 }
@@ -53,7 +92,10 @@ fn random_pairing_code() -> String {
     let mut bytes = [0u8; 12];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     let alphabet = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let code: String = bytes.iter().map(|byte| alphabet[(byte & 31) as usize] as char).collect();
+    let code: String = bytes
+        .iter()
+        .map(|byte| alphabet[(byte & 31) as usize] as char)
+        .collect();
     format!("{}-{}-{}", &code[..4], &code[4..8], &code[8..12])
 }
 
@@ -92,15 +134,24 @@ impl App {
             .ok()
             .and_then(|menu| {
                 let mut rgba = vec![0u8; 16 * 16 * 4];
-                for y in 2..14 { for x in 2..14 {
-                    let i = (y * 16 + x) * 4;
-                    rgba[i..i+4].copy_from_slice(&[200, 242, 123, 255]);
-                }}
+                for y in 2..14 {
+                    for x in 2..14 {
+                        let i = (y * 16 + x) * 4;
+                        rgba[i..i + 4].copy_from_slice(&[200, 242, 123, 255]);
+                    }
+                }
                 let icon = Icon::from_rgba(rgba, 16, 16).ok()?;
-                TrayIconBuilder::new().with_menu(Box::new(menu)).with_icon(icon)
-                    .with_tooltip("XanDesk — remote PC host").build().ok()
+                TrayIconBuilder::new()
+                    .with_menu(Box::new(menu))
+                    .with_icon(icon)
+                    .with_tooltip("XanDesk — remote PC host")
+                    .build()
+                    .ok()
             });
-        if tray.is_none() { cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true)); }
+        if tray.is_none() {
+            cc.egui_ctx
+                .send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        }
         Self {
             runtime,
             status: Arc::new(Mutex::new(Status {
@@ -129,8 +180,17 @@ impl App {
                 return;
             }
         };
-        self.room = random_hex::<16>();
-        self.token = random_hex::<32>();
+        match host_identity() {
+            Ok(identity) => {
+                self.room = identity.room;
+                self.token = random_hex::<32>();
+            }
+            Err(error) => {
+                self.status.lock().unwrap().message =
+                    format!("Could not create this PC's secure identity: {error}");
+                return;
+            }
+        }
         self.pairing_code = random_pairing_code();
         let (tx, rx) = mpsc::unbounded_channel();
         self.commands = Some(tx);
@@ -163,6 +223,7 @@ impl App {
             s.running = false;
             s.registered = false;
             s.pending = false;
+            s.pair_pending = false;
             s.capture_fps = 0.0;
             s.encoded_fps = 0.0;
             s.message = match result {
@@ -180,11 +241,15 @@ impl App {
     fn open_pair_page(&mut self) {
         let site = std::env::var("XANDESK_SITE_URL")
             .unwrap_or_else(|_| "https://xandesk.pages.dev".into())
-            .trim_end_matches('/').to_owned();
-        if self.pairing_code.is_empty() { return; }
+            .trim_end_matches('/')
+            .to_owned();
+        if self.pairing_code.is_empty() {
+            return;
+        }
         let url = format!("{site}/#/dashboard?pair={}", self.pairing_code);
         if let Err(error) = webbrowser::open(&url) {
-            self.status.lock().unwrap().message = format!("Could not open XanDesk website: {error}");
+            self.status.lock().unwrap().message =
+                format!("Could not open XanDesk website: {error}");
         }
     }
 }
@@ -204,20 +269,28 @@ impl eframe::App for App {
                         self.open_pair_page();
                     } else {
                         self.open_pair_when_ready = true;
-                        if !running { self.start(); }
+                        if !running {
+                            self.start();
+                        }
                     }
                 }
                 "pause" => self.command(Command::Stop),
-                "quit" => { self.command(Command::Stop); ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+                "quit" => {
+                    self.command(Command::Stop);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
                 _ => {}
             }
         }
-        let (pending, registered, running) = { let s=self.status.lock().unwrap(); (s.pending,s.registered,s.running) };
+        let (pending, pair_pending, registered, running) = {
+            let s = self.status.lock().unwrap();
+            (s.pending, s.pair_pending, s.registered, s.running)
+        };
         if self.open_pair_when_ready && !running && !registered {
             self.open_pair_when_ready = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         }
-        if pending {
+        if pending || pair_pending {
             self.approval_window_opened = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         } else if self.approval_window_opened && running {
@@ -256,10 +329,15 @@ impl eframe::App for App {
             ui.add_space(16.0); ui.separator();
             let s = self.status.lock().unwrap();
             ui.add_space(10.0); ui.label(&s.message);
-            if s.pending {
+            if s.pending || s.pair_pending {
                 ui.add_space(12.0);
-                ui.colored_label(egui::Color32::YELLOW,"Someone with your pairing key wants to see and control this PC.");
-                ui.horizontal(|ui| { if ui.button("Allow this session").clicked() { self.command(Command::Approve); } if ui.button("Decline").clicked() { self.command(Command::Reject); } });
+                if pair_pending {
+                    ui.colored_label(egui::Color32::YELLOW,"Someone wants to add this PC to their XanDesk account.");
+                    ui.horizontal(|ui| { if ui.button("Allow pairing").clicked() { self.command(Command::PairApprove); } if ui.button("Decline").clicked() { self.command(Command::PairReject); } });
+                } else {
+                    ui.colored_label(egui::Color32::YELLOW,"Someone wants to see and control this PC.");
+                    ui.horizontal(|ui| { if ui.button("Allow this session").clicked() { self.command(Command::Approve); } if ui.button("Decline").clicked() { self.command(Command::Reject); } });
+                }
             }
             ui.add_space(18.0);
             ui.horizontal(|ui| {

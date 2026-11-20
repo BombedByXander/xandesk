@@ -1,32 +1,43 @@
+mod api;
+
 use arcdesk_protocol::{valid_credentials, IceServer, Signal};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{Html, IntoResponse},
-    routing::get,
+    routing::{get, patch, post},
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use subtle::ConstantTimeEq;
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 type Tx = mpsc::Sender<Signal>;
-struct Room {
-    digest: [u8; 32],
-    pairing_digest: Option<[u8; 32]>,
-    host: Tx,
-    viewer: Option<Tx>,
-    approved: bool,
+pub(crate) struct Room {
+    pub(crate) digest: [u8; 32],
+    pub(crate) pairing_digest: Option<[u8; 32]>,
+    pub(crate) host: Tx,
+    pub(crate) viewer: Option<Tx>,
+    pub(crate) approved: bool,
+    pub(crate) viewer_tokens: HashMap<[u8; 32], tokio::time::Instant>,
+    pub(crate) pair_claim: Option<oneshot::Sender<bool>>,
+    pub(crate) pair_claim_approved: bool,
+    pub(crate) device_name: String,
 }
-struct App {
-    rooms: Mutex<HashMap<String, Room>>,
-    ice: Vec<IceServer>,
-    origins: Vec<String>,
+pub(crate) struct App {
+    pub(crate) rooms: Mutex<HashMap<String, Room>>,
+    pub(crate) ice: Vec<IceServer>,
+    pub(crate) origins: Vec<String>,
+    pub(crate) supabase_url: String,
+    pub(crate) supabase_publishable_key: String,
+    pub(crate) public_url: String,
+    pub(crate) http: reqwest::Client,
     slots: Arc<Semaphore>,
 }
 
@@ -47,12 +58,42 @@ async fn main() -> anyhow::Result<()> {
         .split(',')
         .map(|s| s.trim().to_owned())
         .collect();
+    let supabase_url = std::env::var("XANDESK_SUPABASE_URL")
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_owned();
+    let supabase_publishable_key =
+        std::env::var("XANDESK_SUPABASE_PUBLISHABLE_KEY").unwrap_or_default();
+    let public_url = std::env::var("XANDESK_RELAY_PUBLIC_URL")
+        .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_owned();
     let state = Arc::new(App {
         rooms: Mutex::new(HashMap::new()),
         ice,
         origins,
+        supabase_url,
+        supabase_publishable_key,
+        public_url,
+        http: reqwest::Client::new(),
         slots: Arc::new(Semaphore::new(256)),
     });
+    let cors_origins = state
+        .origins
+        .iter()
+        .filter_map(|origin| origin.parse().ok())
+        .collect::<Vec<_>>();
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(cors_origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
     let app = Router::new()
         .route("/", get(|| async { Html(include_str!("../../../web/index.html")) }))
         .route("/client.js", get(|| async { ([("content-type", "text/javascript; charset=utf-8")], include_str!("../../../web/client.js")) }))
@@ -61,6 +102,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/style.css", get(|| async { ([("content-type", "text/css; charset=utf-8")], include_str!("../../../web/style.css")) }))
         .route("/health", get(|| async { "ok" }))
         .route("/ws", get(upgrade))
+        .route("/api/v1/devices", get(api::list_devices))
+        .route("/api/v1/devices/pairing/claim", post(api::claim_device))
+        .route("/api/v1/devices/{id}", patch(api::rename_device).delete(api::remove_device))
+        .route("/api/v1/devices/{id}/sessions", post(api::create_session))
+        .layer(cors)
         .layer(axum::middleware::from_fn(|req, next: axum::middleware::Next| async move {
             let mut response = next.run(req).await;
             let h = response.headers_mut();
@@ -121,14 +167,23 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
     let Ok(signal) = serde_json::from_str::<Signal>(&text) else {
         return;
     };
-    let (room_id, token, is_host, pairing_code) = match signal {
-        Signal::Register { room, token, pairing_code } => (room, token, true, Some(pairing_code)),
-        Signal::Join { room, token } => (room, token, false, None),
+    let (room_id, token, is_host, pairing_code, device_name) = match signal {
+        Signal::Register {
+            room,
+            token,
+            pairing_code,
+            device_name,
+        } => (room, token, true, Some(pairing_code), device_name),
+        Signal::Join { room, token } => (room, token, false, None, String::new()),
         _ => return,
     };
-    let pairing_code_valid = pairing_code.as_ref().and_then(|code| normalize_pairing_code(code)).is_some();
+    let pairing_code_valid = pairing_code
+        .as_ref()
+        .and_then(|code| normalize_pairing_code(code))
+        .is_some();
     let has_pairing_code = pairing_code.as_ref().is_some_and(|code| !code.is_empty());
-    if (is_host && has_pairing_code && !pairing_code_valid) || !valid_credentials(&room_id, &token) {
+    if (is_host && has_pairing_code && !pairing_code_valid) || !valid_credentials(&room_id, &token)
+    {
         return;
     }
     let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
@@ -140,11 +195,16 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                 false
             } else {
                 let pairing_digest: Option<[u8; 32]> = pairing_code.as_ref().and_then(|code| {
-                    normalize_pairing_code(code).map(|normalized| Sha256::digest(normalized.as_bytes()).into())
+                    normalize_pairing_code(code)
+                        .map(|normalized| Sha256::digest(normalized.as_bytes()).into())
                 });
-                if pairing_digest.as_ref().is_some_and(|candidate| rooms.values().any(|room| {
-                    room.pairing_digest.as_ref().is_some_and(|known| bool::from(known.ct_eq(candidate)))
-                })) {
+                if pairing_digest.as_ref().is_some_and(|candidate| {
+                    rooms.values().any(|room| {
+                        room.pairing_digest
+                            .as_ref()
+                            .is_some_and(|known| bool::from(known.ct_eq(candidate)))
+                    })
+                }) {
                     return;
                 }
                 rooms.insert(
@@ -155,23 +215,34 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                         host: tx.clone(),
                         viewer: None,
                         approved: false,
+                        viewer_tokens: HashMap::new(),
+                        pair_claim: None,
+                        pair_claim_approved: false,
+                        device_name,
                     },
                 );
                 true
             }
         } else if let Some(room) = rooms.get_mut(&room_id) {
             let authorized = if token.is_empty() {
-                pairing_code.as_ref().and_then(|code| normalize_pairing_code(code)).and_then(|code| {
-                    let presented: [u8; 32] = Sha256::digest(code.as_bytes()).into();
-                    room.pairing_digest.as_ref().map(|known| bool::from(known.ct_eq(&presented)))
-                }).unwrap_or(false)
+                pairing_code
+                    .as_ref()
+                    .and_then(|code| normalize_pairing_code(code))
+                    .and_then(|code| {
+                        let presented: [u8; 32] = Sha256::digest(code.as_bytes()).into();
+                        room.pairing_digest
+                            .as_ref()
+                            .map(|known| bool::from(known.ct_eq(&presented)))
+                    })
+                    .unwrap_or(false)
+            } else if bool::from(room.digest.ct_eq(&digest)) {
+                true
             } else {
-                bool::from(room.digest.ct_eq(&digest))
+                let now = tokio::time::Instant::now();
+                room.viewer_tokens.retain(|_, expiry| *expiry > now);
+                room.viewer_tokens.remove(&digest).is_some()
             };
-            if authorized
-                && room.viewer.is_none()
-                && room.host.try_send(Signal::Request).is_ok()
-            {
+            if authorized && room.viewer.is_none() && room.host.try_send(Signal::Request).is_ok() {
                 room.viewer = Some(tx.clone());
                 room.approved = false;
                 true
@@ -228,6 +299,15 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                         Some((room.viewer.as_ref().unwrap().clone(), Signal::Ready { ice_servers: app.ice.clone() }))
                     }
                     (true, Signal::Reject) => room.viewer.as_ref().map(|v| (v.clone(), Signal::Reject)),
+                    (true, Signal::PairApprove) if room.pair_claim.is_some() => {
+                        room.pair_claim_approved = true;
+                        if let Some(waiter) = room.pair_claim.take() { let _ = waiter.send(true); }
+                        None
+                    }
+                    (true, Signal::PairReject) if room.pair_claim.is_some() => {
+                        if let Some(waiter) = room.pair_claim.take() { let _ = waiter.send(false); }
+                        None
+                    }
                     (true, Signal::Answer { sdp }) if room.approved => room.viewer.as_ref().map(|v| (v.clone(), Signal::Answer { sdp })),
                     (false, Signal::Offer { sdp }) if room.approved => Some((room.host.clone(), Signal::Offer { sdp })),
                     _ => None,
@@ -252,8 +332,15 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
     }
 }
 
-fn normalize_pairing_code(value: &str) -> Option<String> {
-    let code = value.chars().filter(|c| *c != '-').collect::<String>().to_ascii_uppercase();
-    (code.len() == 12 && code.bytes().all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(&b)))
-        .then_some(code)
+pub(crate) fn normalize_pairing_code(value: &str) -> Option<String> {
+    let code = value
+        .chars()
+        .filter(|c| *c != '-')
+        .collect::<String>()
+        .to_ascii_uppercase();
+    (code.len() == 12
+        && code
+            .bytes()
+            .all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(&b)))
+    .then_some(code)
 }

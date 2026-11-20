@@ -1,31 +1,56 @@
-# Deploy XanDesk on Cloudflare Pages
+# XanDesk website and API deployment
 
-## Frontend
+The site is hosted on Cloudflare Pages. The account/device API and WebRTC signaling run together in the Rust `arcdesk-relay` service, because Pages Functions cannot keep the host's persistent WebSocket connection. The same public relay URL is used for `XANDESK_API` and the Windows host's relay address.
 
-In Cloudflare Pages, connect this repository and set the project root to `arcdesk/web`. Use no build command; set the output directory to `.`. The site is static HTML/CSS/JavaScript and includes a Pages `wrangler.toml`, a Pages Function at `functions/api/config.js`, and security `_headers`. The supplied Supabase project URL and publishable key are configured in `wrangler.toml` and exposed by that Function for browser auth. Set `XANDESK_API` to your HTTPS account/device API when it is deployed; that separate API is required for pairing, device management, and session launch. The Windows host reads `XANDESK_SITE_URL` (defaults to `https://xandesk.pages.dev`) when opening the owner dashboard from its tray menu.
+## One-time Supabase setup
 
-In Supabase Authentication settings, enable the Email provider. Set the Site URL to your published Pages origin (for example `https://xandesk.pages.dev`) and add that origin's `/**` path to the redirect URL allow-list. Add your custom domain too if you use one. Email confirmation can stay enabled; new accounts then need to confirm their email before signing in. The app uses Supabase Auth directly for account creation, password sign-in, token refresh, and sign-out. Only the project's public publishable key is sent to the browser; never put a Supabase secret/service-role key in Pages frontend configuration.
+1. Open the Supabase project SQL Editor.
+2. Run the SQL in `supabase/migrations/20261119000000_xandesk_devices.sql`.
+3. In Authentication settings, enable the Email provider. Set the Site URL to the published Pages origin and allow that origin with `/**` for email confirmation redirects. Keep email confirmation enabled if desired.
 
-To deploy from the command line instead, install Wrangler with `npm install -g wrangler`, authenticate with `npx wrangler login`, then run `npx wrangler pages deploy . --project-name xandesk` from `arcdesk/web`. Wrangler deploys the Pages Function with the static files. The Cloudflare dashboard's drag-and-drop Direct Upload does not deploy the `functions/` directory.
+The migration creates an owner-protected `xandesk_devices` table. The API verifies the user's Supabase access token and uses that same token with Row Level Security for device records. It does not require a Supabase service-role key.
 
-The browser app authenticates accounts with Supabase Auth. It separately expects a XanDesk API implementing the device/session contracts below. Until that service is deployed, the app can create accounts and sign in, but device pages show a real API-configuration error and do not fabricate devices or sessions. The PC owner signs in, submits the host's 12-character pairing code using **Add PC**, then approves enrollment on the host. After enrollment, an authorized peer signs in and chooses that PC from the dashboard; peers do not use the pairing code to view the stream.
+## Deploy the relay and API
 
-Cloudflare Pages only serves the frontend and its small configuration Function. It does not run this Rust WebSocket relay or the account API. Deploy `arcdesk-relay` on a public server with a stable hostname and HTTPS/WSS; set the Windows app's relay address to that hostname and `ARCDESK_ORIGINS` to include the exact Pages site origin. The account API must verify a code against the live host, send an enrollment request through the relay, wait for the host's Allow response, and store an account-bound device authorization. Session creation must then authorize the viewer against that account-bound device. This account/host enrollment and session backend is not implemented in the current Rust preview. For a same-PC streaming test, run `arcdesk-relay.exe`, set the host address to `http://localhost:8787`, and open the local relay site on that same PC.
+This repo includes a `render.yaml` Blueprint and `Dockerfile` for the Rust relay/API.
 
-## Required account and device backend
+1. In Render, create a Blueprint from `BombedByXander/xandesk` and select the repository's root `render.yaml`.
+2. Wait for the `xandesk-relay` service to deploy. Its public HTTPS service URL is also the WebSocket relay URL.
+3. In Render, make sure `ARCDESK_ORIGINS` includes the exact XanDesk Pages origin. Add your custom site origin too if you use one.
+4. The service reads its own public URL from Render, so no relay URL secret needs to be entered there.
 
-Implement these device routes over HTTPS. Return JSON errors as `{"message":"..."}`. Validate the Supabase access token server-side against this Supabase project before each action; do not put tokens or passwords in URLs. Restrict CORS to the exact Pages origin. Add CSRF defenses if authentication switches to cookies.
+The Render service uses your Supabase project URL and publishable key, which are public client settings. It does not expose or need a service-role key.
 
-| Method and path | Request / response |
+## Point Cloudflare Pages at the API
+
+For the Pages Git project, use:
+
+- **Root directory:** `web`
+- **Build command:** leave blank
+- **Build output directory:** `.`
+
+In Pages project settings, add the environment variable `XANDESK_API` with the relay service's public HTTPS URL, for example `https://xandesk-relay.onrender.com` (use the exact URL Render assigned). Save and redeploy. The Pages config Function reads this setting for device API calls and WebRTC signaling.
+
+The Windows app's **XanDesk relay server** field must use that same URL. It converts HTTPS to WSS automatically. The website and host both initiate outbound internet connections; no router port forwarding or home IP is needed.
+
+For local Wrangler deployment, run `npx wrangler pages deploy . --project-name xandesk` from the `web` directory. This deploys the Pages Function along with the static site; Cloudflare drag-and-drop upload does not include Functions.
+
+## API provided
+
+The Rust relay implements:
+
+| Route | Behavior |
 |---|---|
-| `GET /api/v1/devices` | Supabase access token in `Authorization: Bearer <token>` → `{devices:[{id,name,os,online,lastSeen}]}` |
-| `POST /api/v1/devices/pairing/claim` | Supabase bearer token + `{pairingCode}` → `{device:{id,name,os,online}}`; validate the live host code and require the host's Allow approval before claiming it to this account |
-| `PATCH /api/v1/devices/{id}` | `{name}` → updated device |
-| `DELETE /api/v1/devices/{id}` | revoke enrollment and terminate active sessions |
-| `POST /api/v1/devices/{id}/sessions` | `{}` → `{sessionId,signalingUrl,iceServers}` with short-lived session authorization |
+| `GET /api/v1/devices` | Lists only the signed-in user's paired computers and their live online status |
+| `POST /api/v1/devices/pairing/claim` | Validates the current host pairing code and waits for approval in the Windows app before saving ownership |
+| `PATCH /api/v1/devices/{id}` | Renames a computer owned by the signed-in user |
+| `DELETE /api/v1/devices/{id}` | Removes that account's enrollment and terminates its active viewer |
+| `POST /api/v1/devices/{id}/sessions` | Issues a short-lived, one-use WebSocket join token for an online computer the user owns |
 
-For authenticated sessions, `signalingUrl` accepts a bearer-authenticated offer containing `{type:"offer",sessionId,sdp}` and returns `{sdp}`. It must authorize the host and viewer against the same account/device/session, route signaling only after authorization, and provide STUN plus expiring TURN credentials. ICE policy `all` prefers direct routes and automatically allows TURN candidates as fallback. The host must use the same authenticated enrollment and signaling protocol. This account API and host integration do not exist in the current Rust pairing backend; its functional preview flow uses the temporary pairing code.
+The host identity is stored locally so a computer keeps its account association between host restarts. Pairing codes are still temporary and must be approved from the host. Supabase validates user sessions; database Row Level Security protects each device record. The relay keeps active connections in memory, so run one always-on relay instance rather than scaling it horizontally.
 
-## Remote networking
+## Network connectivity
 
-The account/session service must be publicly reachable from the host and browser. Operate signaling over WSS. Configure STUN and a TURN service reachable over UDP and TCP/TLS. Use time-limited TURN credentials, rate limiting, account/device authorization, monitoring, and bandwidth limits. The browser and host need no port forwarding, home IP address or VPN. No service can guarantee connectivity where a network blocks every allowed path. The current host's account enrollment and cross-network TURN path need server integration and separate-network validation before claiming worldwide production connectivity.
+The default ICE configuration includes public STUN, which can establish direct peer-to-peer connections on many networks. For TURN fallback on restrictive firewalls and NATs, set `ARCDESK_ICE_SERVERS` on the relay service to a JSON list containing your TURN provider's server URLs and credentials. TURN credentials must be treated as server secrets and rotated; do not commit them into this repository. Connectivity cannot be guaranteed if a network blocks both direct WebRTC and the configured TURN routes.
+
+Cloudflare Pages serves the site; Render hosts the long-lived Rust service; Supabase provides accounts and the device table. The relay/API source is in `crates/relay/src/`, and the Windows approval and stable host identity are in `crates/host/src/`.

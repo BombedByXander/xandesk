@@ -16,7 +16,7 @@ A separate project from the arcade website in the parent directory. The Windows 
 
 ## Important parity gaps
 
-This preview does **not** yet implement system audio, virtual game controllers, file transfer, reverse clipboard synchronization, multi-monitor switching, GPU hardware encoding, automatic bandwidth/resolution adaptation, the authenticated account API, persistent account/device enrollment, MFA, a Windows service, Windows lock/sign-in/UAC secure-desktop control, auto-start, code signing, a signed installer, or automatic updates. It requires an unlocked Windows desktop. The account API and host enrollment handshake must be deployed before a pairing code can be claimed to an account or a dashboard session can be authorized. Elevated apps and some games may reject synthetic input. Desktop capture currently does not composite a separately rendered hardware cursor.
+This preview does **not** yet implement system audio, virtual game controllers, file transfer, reverse clipboard synchronization, multi-monitor switching, GPU hardware encoding, automatic bandwidth/resolution adaptation, MFA, a Windows service, Windows lock/sign-in/UAC secure-desktop control, auto-start, code signing, a signed installer, or automatic updates. It requires an unlocked Windows desktop. The Rust relay now includes Supabase-authenticated device APIs, approval-gated pairing, and short-lived viewer sessions; follow [SETUP-PAGES.md](SETUP-PAGES.md) to deploy it and apply its database migration. Elevated apps and some games may reject synthetic input. Desktop capture currently does not composite a separately rendered hardware cursor.
 
 These are real engineering tasks, not switches that can be enabled in Cloudflare Pages. DextraDesk's public feature list was reviewed at <https://dextradesk.com/>. XanDesk has its own name and UI and does not reuse DextraDesk branding or code.
 
@@ -33,7 +33,7 @@ The resulting `dist` folder contains `XanDesk.exe`, `arcdesk-relay.exe`, and any
 
 ## Local setup
 
-Run `arcdesk-relay.exe`, open XanDesk from the system tray, and set its relay field to `http://localhost:8787`. The relay is a local development signaling server only. It does not provide the account API needed to claim pairing codes and launch sessions from the dashboard. `localhost` on another device refers to that other device.
+Run `arcdesk-relay.exe`, open XanDesk from the system tray, and set its relay field to `http://localhost:8787`. For local account features, configure Supabase settings and apply the migration from `SETUP-PAGES.md`; the database then stores account-owned device records. `localhost` on another device refers to that other device.
 
 ## Cloudflare Pages and backend deployment
 
@@ -68,7 +68,7 @@ Set the host's connection server to `https://desk.example.com`. The host initiat
 
 ## Cloudflare Pages integration
 
-The XanDesk Pages frontend is in `web/`. Connect the repository with project root `arcdesk/web` and no build command. The provided Supabase URL and publishable key are configured in `web/wrangler.toml`; configure the Supabase Auth site URL and redirect allow-list as described in [SETUP-PAGES.md](SETUP-PAGES.md). Set `XANDESK_API` in Pages to the account/device API origin when that service is deployed, and `XANDESK_SITE_URL` on the host to the published Pages URL if it differs from `https://xandesk.pages.dev`. Supabase handles account signup and password sign-in; device enrollment and session authorization endpoints are not implemented by the current Rust relay.
+The XanDesk Pages frontend is in `web/`. Connect the repository with project root `web` and no build command. The provided Supabase URL and publishable key are configured in `web/wrangler.toml`; configure the Supabase Auth site URL and redirect allow-list as described in [SETUP-PAGES.md](SETUP-PAGES.md). Set `XANDESK_API` in Pages to the deployed Rust relay origin, and `XANDESK_SITE_URL` on the host to the published Pages URL if it differs from `https://xandesk.pages.dev`. Supabase handles account signup and password sign-in; the Rust relay provides device enrollment and session authorization.
 
 ## Verification
 

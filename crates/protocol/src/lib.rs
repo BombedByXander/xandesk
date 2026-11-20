@@ -18,18 +18,36 @@ pub enum Signal {
         room: String,
         token: String,
         #[serde(default)]
+        device_name: String,
+        #[serde(default)]
         pairing_code: String,
     },
-    Join { room: String, token: String },
-    Registered { ice_servers: Vec<IceServer> },
+    Join {
+        room: String,
+        token: String,
+    },
+    PairRequest,
+    PairApprove,
+    PairReject,
+    Registered {
+        ice_servers: Vec<IceServer>,
+    },
     Request,
     Approve,
     Reject,
-    Ready { ice_servers: Vec<IceServer> },
-    Offer { sdp: String },
-    Answer { sdp: String },
+    Ready {
+        ice_servers: Vec<IceServer>,
+    },
+    Offer {
+        sdp: String,
+    },
+    Answer {
+        sdp: String,
+    },
     Left,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
