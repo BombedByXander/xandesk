@@ -23,14 +23,25 @@ try {
     $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $project 'target' }
     $dist = Join-Path $project 'dist'
     New-Item -ItemType Directory -Force $dist | Out-Null
-    Copy-Item -LiteralPath "$target\$profile\xandesk.exe" -Destination (Join-Path $dist 'XanDesk.exe')
+    $hostExe = Join-Path $dist 'XanDesk.exe'
+    try {
+        Copy-Item -LiteralPath "$target\$profile\xandesk.exe" -Destination $hostExe -Force
+    } catch {
+        $hostExe = Join-Path $dist 'XanDesk-Updated.exe'
+        Copy-Item -LiteralPath "$target\$profile\xandesk.exe" -Destination $hostExe -Force
+        Write-Warning 'XanDesk.exe is open; the updated build was saved as XanDesk-Updated.exe. Close XanDesk and rebuild to replace it.'
+    }
     Copy-Item -LiteralPath "$target\$profile\arcdesk-relay.exe" -Destination $dist
     $site = Join-Path $dist 'site'
     New-Item -ItemType Directory -Force $site | Out-Null
     Copy-Item -Path "$project\web\*" -Destination $site -Recurse -Force
     if ($toolchain.Count) {
         foreach ($dll in @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')) {
-            Copy-Item -LiteralPath "$portable\mingw64\bin\$dll" -Destination $dist
+            try {
+                Copy-Item -LiteralPath "$portable\mingw64\bin\$dll" -Destination $dist -Force
+            } catch {
+                Write-Warning "$dll is currently in use; keeping the existing runtime copy."
+            }
         }
     }
     Copy-Item -LiteralPath "$project\README.md","$project\LICENSE","$project\QUICKSTART.txt","$project\SETUP-PAGES.md","$project\VALIDATION.md" -Destination $dist

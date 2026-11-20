@@ -67,11 +67,11 @@ pub async fn run(
     status: Shared,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) -> anyhow::Result<()> {
-    let mut retry_delay = Duration::from_secs(1);
+    let mut retry_delay = Duration::from_secs(3);
     loop {
         match run_connection(
             url.clone(), room.clone(), token.clone(), pairing_code.clone(), bitrate,
-            clipboard, away_access, status.clone(), &mut commands,
+            clipboard, away_access, status.clone(), &mut commands, &mut retry_delay,
         ).await {
             Ok(()) => return Ok(()),
             Err(error) => {
@@ -92,7 +92,7 @@ pub async fn run(
                         Some(_) => {},
                     }
                 }
-                retry_delay = (retry_delay * 2).min(Duration::from_secs(30));
+                retry_delay = (retry_delay * 2).min(Duration::from_secs(60));
             }
         }
     }
@@ -108,6 +108,7 @@ async fn run_connection(
     away_access: bool,
     status: Shared,
     commands: &mut mpsc::UnboundedReceiver<Command>,
+    retry_delay: &mut Duration,
 ) -> anyhow::Result<()> {
     let (socket, _) = tokio::time::timeout(Duration::from_secs(15), connect_async(url.as_str()))
         .await
@@ -198,7 +199,7 @@ async fn run_connection(
                         _=>continue,
                     };
                     match serde_json::from_str::<Signal>(&text)? {
-                        Signal::Registered {ice_servers}=>{let has_turn=ice_servers.iter().any(|server|server.urls.iter().any(|url|url.starts_with("turn:")||url.starts_with("turns:")));ice=ice_servers;let mut s=status.lock().unwrap();s.registered=true;s.message=if has_turn{"Host online. TURN fallback is ready for restrictive networks.".into()}else{"Host online with direct connections only. Add TURN credentials on the relay for restrictive networks.".into()};}
+                        Signal::Registered {ice_servers}=>{*retry_delay=Duration::from_secs(3);let has_turn=ice_servers.iter().any(|server|server.urls.iter().any(|url|url.starts_with("turn:")||url.starts_with("turns:")));ice=ice_servers;let mut s=status.lock().unwrap();s.registered=true;s.message=if has_turn{"Host online. TURN fallback is ready for restrictive networks.".into()}else{"Host online with direct connections only. Add TURN credentials on the relay for restrictive networks.".into()};}
                         Signal::Request=>{
                             if away_access {
                                 approved=true; session_deadline=Some(Instant::now());
