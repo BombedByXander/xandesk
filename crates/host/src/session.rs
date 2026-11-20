@@ -67,6 +67,48 @@ pub async fn run(
     status: Shared,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) -> anyhow::Result<()> {
+    let mut retry_delay = Duration::from_secs(1);
+    loop {
+        match run_connection(
+            url.clone(), room.clone(), token.clone(), pairing_code.clone(), bitrate,
+            clipboard, away_access, status.clone(), &mut commands,
+        ).await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                {
+                    let mut state = status.lock().unwrap();
+                    state.registered = false;
+                    state.pending = false;
+                    state.pair_pending = false;
+                    state.message = format!(
+                        "Connection interrupted: {error:#}. Reconnecting in {}s…",
+                        retry_delay.as_secs()
+                    );
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(retry_delay) => {},
+                    command = commands.recv() => match command {
+                        Some(Command::Stop) | None => return Ok(()),
+                        Some(_) => {},
+                    }
+                }
+                retry_delay = (retry_delay * 2).min(Duration::from_secs(30));
+            }
+        }
+    }
+}
+
+async fn run_connection(
+    url: url::Url,
+    room: String,
+    token: String,
+    pairing_code: String,
+    bitrate: u32,
+    clipboard: bool,
+    away_access: bool,
+    status: Shared,
+    commands: &mut mpsc::UnboundedReceiver<Command>,
+) -> anyhow::Result<()> {
     let (socket, _) = tokio::time::timeout(Duration::from_secs(15), connect_async(url.as_str()))
         .await
         .context("Server connection timed out")??;
@@ -90,10 +132,15 @@ pub async fn run(
     let mut approval_deadline: Option<Instant> = None;
     let mut session_deadline: Option<Instant> = None;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let mut keepalive = tokio::time::interval(Duration::from_secs(12));
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_server = Instant::now();
     let result: anyhow::Result<()> = async {
         loop {
             tokio::select! {
+                _ = keepalive.tick() => {
+                    sink.send(Message::Text(serde_json::to_string(&Signal::Heartbeat)?.into())).await?;
+                }
                 _ = tick.tick() => {
                     anyhow::ensure!(last_server.elapsed() < Duration::from_secs(65),"Connection server stopped responding");
                     if approval_deadline.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) {
@@ -268,31 +315,43 @@ impl Session {
         let report = status.clone();
         let error_tx = errors.clone();
         let controls = controller.clone();
+        let connection_peer = peer.clone();
         peer.on_peer_connection_state_change(Box::new(move |state| {
             let end = end.clone();
             let online = online.clone();
             let report = report.clone();
             let errors = error_tx.clone();
             let controls = controls.clone();
+            let connection_peer = connection_peer.clone();
             Box::pin(async move {
                 if state == RTCPeerConnectionState::Connected {
                     online.store(true, Ordering::Release);
                     report.lock().unwrap().message =
                         "CONNECTED — your primary monitor is being shared and controlled.".into();
                 }
-                if matches!(
-                    state,
-                    RTCPeerConnectionState::Disconnected
-                        | RTCPeerConnectionState::Failed
-                        | RTCPeerConnectionState::Closed
-                ) {
+                if state == RTCPeerConnectionState::Disconnected {
+                    online.store(false, Ordering::Release);
+                    controls.lock().unwrap().release();
+                    report.lock().unwrap().message =
+                        "Connection interrupted. Waiting for the network to recover…".into();
+                    let end = end.clone();
+                    let online = online.clone();
+                    let errors = errors.clone();
+                    let connection_peer = connection_peer.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        if connection_peer.connection_state() == RTCPeerConnectionState::Disconnected
+                            && !end.swap(true, Ordering::AcqRel)
+                        {
+                            online.store(false, Ordering::Release);
+                            let _ = errors.send("Remote connection stayed offline for 20 seconds. Reconnecting the host…".into());
+                        }
+                    });
+                } else if state == RTCPeerConnectionState::Failed {
                     online.store(false, Ordering::Release);
                     if !end.swap(true, Ordering::AcqRel) {
                         controls.lock().unwrap().release();
-                        let _ = errors.send(
-                            "Viewer disconnected or WebRTC connection failed. Sharing has stopped."
-                                .into(),
-                        );
+                        let _ = errors.send("The remote connection failed. Reconnecting the host…".into());
                     }
                 }
             })

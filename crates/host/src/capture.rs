@@ -46,6 +46,38 @@ pub fn run(
     bitrate: u32,
     status: Shared,
 ) -> anyhow::Result<()> {
+    let mut retry_delay = Duration::from_millis(500);
+    loop {
+        if stopped.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if let Err(error) = run_attempt(
+            tx.clone(), stopped.clone(), keyframe.clone(), bitrate, status.clone(),
+        ) {
+            if stopped.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            status.lock().unwrap().message = format!(
+                "Desktop capture interrupted: {error:#}. Retrying…"
+            );
+            let until = Instant::now() + retry_delay;
+            while !stopped.load(Ordering::Acquire) && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            retry_delay = (retry_delay * 2).min(Duration::from_secs(10));
+        } else {
+            return Ok(());
+        }
+    }
+}
+
+fn run_attempt(
+    tx: mpsc::Sender<Frame>,
+    stopped: Arc<AtomicBool>,
+    keyframe: Arc<AtomicBool>,
+    bitrate: u32,
+    status: Shared,
+) -> anyhow::Result<()> {
     let display = scrap::Display::primary().context("Could not open the primary monitor")?;
     let mut capturer = scrap::Capturer::new(display).context("DXGI desktop capture failed")?;
     let (width, height) = (capturer.width(), capturer.height());
@@ -54,6 +86,12 @@ pub fn run(
         "H.264 requires an even-sized monitor resolution"
     );
     status.lock().unwrap().dimensions = (width, height);
+    {
+        let mut state = status.lock().unwrap();
+        if state.message.starts_with("Desktop capture interrupted:") {
+            state.message = "Desktop capture restored. The host remains online.".into();
+        }
+    }
     let mut encoder = encoder(bitrate)?;
     let mut pixels = vec![0u8; width * height * 4];
     let mut yuv = YUVBuffer::new(width, height);

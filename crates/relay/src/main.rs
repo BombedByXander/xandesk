@@ -310,6 +310,9 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                     }
                     (true, Signal::Answer { sdp }) if room.approved => room.viewer.as_ref().map(|v| (v.clone(), Signal::Answer { sdp })),
                     (false, Signal::Offer { sdp }) if room.approved => Some((room.host.clone(), Signal::Offer { sdp })),
+                    // Host application heartbeats keep idle WebSocket sessions
+                    // active on platforms that track inbound application data.
+                    (_, Signal::Heartbeat) => None,
                     _ => None,
                 };
                 if let Some((target, signal)) = target_and_message {

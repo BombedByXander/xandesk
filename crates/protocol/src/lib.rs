@@ -44,6 +44,7 @@ pub enum Signal {
     Answer {
         sdp: String,
     },
+    Heartbeat,
     Left,
     Error {
         message: String,
