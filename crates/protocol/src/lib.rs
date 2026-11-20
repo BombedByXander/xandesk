@@ -32,7 +32,10 @@ pub enum Signal {
     Registered {
         ice_servers: Vec<IceServer>,
     },
-    Request,
+    Request {
+        #[serde(default)]
+        account_authorized: bool,
+    },
     Approve,
     Reject,
     Ready {

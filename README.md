@@ -10,13 +10,13 @@ A separate project from the arcade website in the parent directory. The Windows 
 - Primary-monitor desktop capture and H.264 over encrypted WebRTC.
 - Browser keyboard, mouse, scroll, relative/game mouse, touch pointer, full-screen viewing, and optional browser-to-PC text clipboard.
 - Measured browser decode FPS, incoming video bitrate, WebRTC round-trip time, and received resolution. These are measurements, not advertised targets. Static desktops may report very low FPS.
-- Rust WebSocket signaling server. Single viewer per PC. Random 256-bit pairing keys, hashed server-side, constant-time comparison, origin allowlist, message-size limits, approval gate, connection limits, authentication timeout, and liveness checks.
+- Rust WebSocket signaling server. Single viewer per PC. Random 256-bit pairing keys, hashed server-side, constant-time comparison, origin allowlist, message-size limits, account authorization, pairing approval, connection limits, authentication timeout, and liveness checks.
 - Key/button release on blur, disconnect, host stop, or missing input heartbeats.
 - Configurable STUN and TURN. The signaling server does not receive video, audio, or input. A TURN server, when configured, forwards encrypted WebRTC packets.
 
 ## Important parity gaps
 
-This preview does **not** yet implement system audio, virtual game controllers, file transfer, reverse clipboard synchronization, multi-monitor switching, GPU hardware encoding, automatic bandwidth/resolution adaptation, MFA, a Windows service, Windows lock/sign-in/UAC secure-desktop control, auto-start, code signing, a signed installer, or automatic updates. It requires an unlocked Windows desktop. The Rust relay now includes Supabase-authenticated device APIs, approval-gated pairing, and short-lived viewer sessions; follow [SETUP-PAGES.md](SETUP-PAGES.md) to deploy it and apply its database migration. Elevated apps and some games may reject synthetic input. Desktop capture currently does not composite a separately rendered hardware cursor.
+This preview does **not** yet implement system audio, virtual game controllers, file transfer, reverse clipboard synchronization, multi-monitor switching, GPU hardware encoding, automatic bandwidth/resolution adaptation, MFA, a Windows service, Windows lock/sign-in/UAC secure-desktop control, auto-start, code signing, a signed installer, or automatic updates. It requires an unlocked Windows desktop. The Rust relay now includes Supabase-authenticated device APIs, approval-gated pairing, and short-lived account-authorized viewer sessions that do not require repeated host approval; follow [SETUP-PAGES.md](SETUP-PAGES.md) to deploy it and apply its database migration. Elevated apps and some games may reject synthetic input. Desktop capture currently does not composite a separately rendered hardware cursor.
 
 These are real engineering tasks, not switches that can be enabled in Cloudflare Pages. DextraDesk's public feature list was reviewed at <https://dextradesk.com/>. XanDesk has its own name and UI and does not reuse DextraDesk branding or code.
 

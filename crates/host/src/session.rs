@@ -200,10 +200,10 @@ async fn run_connection(
                     };
                     match serde_json::from_str::<Signal>(&text)? {
                         Signal::Registered {ice_servers}=>{*retry_delay=Duration::from_secs(3);let has_turn=ice_servers.iter().any(|server|server.urls.iter().any(|url|url.starts_with("turn:")||url.starts_with("turns:")));ice=ice_servers;let mut s=status.lock().unwrap();s.registered=true;s.message=if has_turn{"Host online. TURN fallback is ready for restrictive networks.".into()}else{"Host online with direct connections only. Add TURN credentials on the relay for restrictive networks.".into()};}
-                        Signal::Request=>{
-                            if away_access {
+                        Signal::Request {account_authorized}=>{
+                            if account_authorized || away_access {
                                 approved=true; session_deadline=Some(Instant::now());
-                                status.lock().unwrap().message="Private pairing link accepted. Establishing connection…".into();
+                                status.lock().unwrap().message=if account_authorized{"Paired account session authorized. Establishing connection…".into()}else{"Private pairing link accepted. Establishing connection…".into()};
                                 sink.send(Message::Text(serde_json::to_string(&Signal::Approve)?.into())).await?;
                             } else {
                                 let mut s=status.lock().unwrap(); s.pending=true;s.message="Connection approval needed.".into();approval_deadline=Some(Instant::now());

@@ -281,8 +281,8 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                 true
             }
         } else if let Some(room) = rooms.get_mut(&room_id) {
-            let authorized = if token.is_empty() {
-                pairing_code
+            let (authorized, account_authorized) = if token.is_empty() {
+                (pairing_code
                     .as_ref()
                     .and_then(|code| normalize_pairing_code(code))
                     .and_then(|code| {
@@ -291,15 +291,15 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
                             .as_ref()
                             .map(|known| bool::from(known.ct_eq(&presented)))
                     })
-                    .unwrap_or(false)
+                    .unwrap_or(false), false)
             } else if bool::from(room.digest.ct_eq(&digest)) {
-                true
+                (true, false)
             } else {
                 let now = tokio::time::Instant::now();
                 room.viewer_tokens.retain(|_, expiry| *expiry > now);
-                room.viewer_tokens.remove(&digest).is_some()
+                (room.viewer_tokens.remove(&digest).is_some(), true)
             };
-            if authorized && room.viewer.is_none() && room.host.try_send(Signal::Request).is_ok() {
+            if authorized && room.viewer.is_none() && room.host.try_send(Signal::Request { account_authorized }).is_ok() {
                 room.viewer = Some(tx.clone());
                 room.approved = false;
                 true

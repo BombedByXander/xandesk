@@ -4,10 +4,10 @@ XanDesk Windows preview
 2. On the host PC, run XanDesk.exe. It starts minimized to the Windows system tray.
 3. Right-click XanDesk in the tray, open the app to configure the relay URL, then Pair this PC... to start the host and open the owner dashboard with the code prefilled.
 4. Sign in, choose Add PC, and submit the code. Approve the pairing request in the XanDesk host window.
-5. The paired PC appears in the dashboard. Choose Connect and approve the remote session on the host. The host must stay powered on, online, and unlocked.
+5. The paired PC appears in the dashboard. Choose Connect. Sessions from your paired XanDesk account connect without another host prompt. The host must stay powered on, online, and unlocked.
 
 For remote access, the host's relay address must be a public HTTPS/WSS endpoint. Cloudflare Pages hosts the website, not the Rust signaling relay. Deploy the relay and account/device/session API separately; configure ARCDESK_ORIGINS to include the Pages origin. See README.md and SETUP-PAGES.md.
 
 To go offline, choose Pause (go offline) from the tray menu. Keep the pairing code private. This preview does not run as a Windows service or start with Windows.
 
-This is an early Rust implementation, not full DextraDesk feature parity. Screen video, keyboard/mouse, optional text clipboard, measured stream FPS, Supabase account auth, approval-gated device pairing, and account-authorized sessions are included in the code. Audio, controllers, file transfer, GPU encoding, and lock-screen access are not implemented. The live website-to-PC flow needs the Supabase migration and public relay deployment in SETUP-PAGES.md.
+This is an early Rust implementation, not full DextraDesk feature parity. Screen video, keyboard/mouse, optional text clipboard, measured stream FPS, Supabase account auth, approval-gated device pairing and automatically approved sessions for already paired accounts are included in the code. Audio, controllers, file transfer, GPU encoding, and lock-screen access are not implemented. The live website-to-PC flow needs the Supabase migration and public relay deployment in SETUP-PAGES.md.
