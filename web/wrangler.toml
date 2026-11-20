@@ -6,3 +6,4 @@ pages_build_output_dir = "."
 # These Supabase Auth settings are public client configuration.
 XANDESK_SUPABASE_URL = "https://sgqiynszzggnfzjsncyl.supabase.co"
 XANDESK_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_gEifLcFwIi6C-zfuyrPfUQ_gMQpbrj3"
+XANDESK_API = "https://xandesk.onrender.com"

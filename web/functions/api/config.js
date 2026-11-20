@@ -1,5 +1,5 @@
 export async function onRequest({ env }) {
-  const value = String(env.XANDESK_API || '').replace(/\/$/, '');
+  const value = String(env.XANDESK_API || 'https://xandesk.onrender.com').replace(/\/$/, '');
   const relayValue = String(env.XANDESK_RELAY || env.XANDESK_API || '').replace(/\/$/, '');
   const supabaseValue = String(env.XANDESK_SUPABASE_URL || '').replace(/\/$/, '');
   const publishableKey = String(env.XANDESK_SUPABASE_PUBLISHABLE_KEY || '');
