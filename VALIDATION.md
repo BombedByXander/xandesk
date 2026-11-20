@@ -1,4 +1,6 @@
-# Validation — November 19, 2026
+# Previous validation snapshot — November 19, 2026
+
+The results below were recorded before the tray-only host and account-based PC enrollment flow were added. They do not verify the current tray menu, dashboard code-claim flow, account backend, or production cross-network connectivity. The latest source compiled as a Windows release build after the tray and pairing UI changes; the new flow still needs a deployed account API and live relay to operate end to end.
 
 Windows x64, Rust 1.100.0 GNU toolchain, release build, local Chrome.
 

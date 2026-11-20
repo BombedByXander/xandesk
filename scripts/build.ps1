@@ -25,6 +25,9 @@ try {
     New-Item -ItemType Directory -Force $dist | Out-Null
     Copy-Item -LiteralPath "$target\$profile\xandesk.exe" -Destination (Join-Path $dist 'XanDesk.exe')
     Copy-Item -LiteralPath "$target\$profile\arcdesk-relay.exe" -Destination $dist
+    $site = Join-Path $dist 'site'
+    New-Item -ItemType Directory -Force $site | Out-Null
+    Copy-Item -Path "$project\web\*" -Destination $site -Recurse -Force
     if ($toolchain.Count) {
         foreach ($dll in @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')) {
             Copy-Item -LiteralPath "$portable\mingw64\bin\$dll" -Destination $dist

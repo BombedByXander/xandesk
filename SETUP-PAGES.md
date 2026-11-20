@@ -2,13 +2,13 @@
 
 ## Frontend
 
-In Cloudflare Pages, connect this repository and set the project root to `arcdesk/web`. Use no build command; set the output directory to `.`. The site is static HTML/CSS/JavaScript and includes a Pages `wrangler.toml`, a Pages Function at `functions/api/config.js`, and security `_headers`. Set `XANDESK_API` to your HTTPS account API and `XANDESK_RELAY` to the public HTTPS origin of the XanDesk Rust signaling server, then deploy again. The site reads `XANDESK_RELAY` to send pairing-code connections to the same relay the Windows host uses.
+In Cloudflare Pages, connect this repository and set the project root to `arcdesk/web`. Use no build command; set the output directory to `.`. The site is static HTML/CSS/JavaScript and includes a Pages `wrangler.toml`, a Pages Function at `functions/api/config.js`, and security `_headers`. Set `XANDESK_API` to your HTTPS account API and deploy again. The Windows host reads `XANDESK_SITE_URL` (defaults to `https://xandesk.pages.dev`) when opening the owner dashboard from its tray menu.
 
 To deploy from the command line instead, install Wrangler with `npm install -g wrangler`, authenticate with `npx wrangler login`, then run `npx wrangler pages deploy . --project-name xandesk` from `arcdesk/web`. Wrangler deploys the Pages Function with the static files. The Cloudflare dashboard's drag-and-drop Direct Upload does not deploy the `functions/` directory.
 
-The browser app expects an account API implementing the contracts below. Until that service is deployed, account pages show a real API-configuration error and do not fabricate devices or sessions. The pairing-code flow uses the Rust relay directly: enter the 12-character code shown in the Windows app, then approve the viewer in the host window (unless you explicitly enabled away access).
+The browser app expects an account API implementing the contracts below. Until that service is deployed, account pages show a real API-configuration error and do not fabricate devices or sessions. The PC owner signs in, submits the host's 12-character pairing code using **Add PC**, then approves enrollment on the host. After enrollment, an authorized peer signs in and chooses that PC from the dashboard; peers do not use the pairing code to view the stream.
 
-Cloudflare Pages only serves the frontend and its small configuration Function. It does not run this Rust WebSocket relay. Deploy `arcdesk-relay` on a public server with a stable hostname and HTTPS/WSS, then set the Windows app's relay address and `XANDESK_RELAY` to that same hostname. Set `ARCDESK_ORIGINS` on the relay to include the exact Pages site origin. For a same-PC local test, run `arcdesk-relay.exe`, set the host address to `http://localhost:8787`, and open the site on that same PC.
+Cloudflare Pages only serves the frontend and its small configuration Function. It does not run this Rust WebSocket relay or the account API. Deploy `arcdesk-relay` on a public server with a stable hostname and HTTPS/WSS; set the Windows app's relay address to that hostname and `ARCDESK_ORIGINS` to include the exact Pages site origin. The account API must verify a code against the live host, send an enrollment request through the relay, wait for the host's Allow response, and store an account-bound device authorization. Session creation must then authorize the viewer against that account-bound device. This account/host enrollment and session backend is not implemented in the current Rust preview. For a same-PC streaming test, run `arcdesk-relay.exe`, set the host address to `http://localhost:8787`, and open the local relay site on that same PC.
 
 ## Required account and device backend
 
@@ -19,7 +19,7 @@ Implement these routes over HTTPS. Return JSON errors as `{"message":"..."}`. Us
 | `POST /api/v1/auth/register` | `{name,email,password}` → `{accessToken,user}` |
 | `POST /api/v1/auth/login` | `{email,password}` → `{accessToken,user}` |
 | `GET /api/v1/devices` | Bearer token → `{devices:[{id,name,os,online,lastSeen}]}` |
-| `POST /api/v1/devices/pairing` | Bearer token → `{pairingCode,expiresAt}`; one-time code, expire promptly |
+| `POST /api/v1/devices/pairing/claim` | Bearer token + `{pairingCode}` → `{device:{id,name,os,online}}`; validate the live host code and require the host's Allow approval before claiming it to this account |
 | `PATCH /api/v1/devices/{id}` | `{name}` → updated device |
 | `DELETE /api/v1/devices/{id}` | revoke enrollment and terminate active sessions |
 | `POST /api/v1/devices/{id}/sessions` | `{}` → `{sessionId,signalingUrl,iceServers}` with short-lived session authorization |

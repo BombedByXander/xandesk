@@ -20,4 +20,6 @@ rand = "0.8"
 url = "2"
 arboard = "3"
 windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+tray-icon = "0.26.1"
+webbrowser = "1"
 

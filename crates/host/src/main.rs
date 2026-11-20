@@ -6,6 +6,9 @@ mod session;
 use eframe::egui;
 use rand::RngCore;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self as std_mpsc, Receiver as TrayReceiver};
+use std::{fs, path::PathBuf};
+use tray_icon::{menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem}, Icon, TrayIcon, TrayIconBuilder};
 use tokio::sync::mpsc;
 
 #[derive(Default)]
@@ -13,6 +16,7 @@ pub struct Status {
     pub message: String,
     pub pending: bool,
     pub running: bool,
+    pub registered: bool,
     pub capture_fps: f64,
     pub encoded_fps: f64,
     pub dimensions: (usize, usize),
@@ -23,6 +27,21 @@ pub enum Command {
     Stop,
 }
 type Shared = Arc<Mutex<Status>>;
+
+fn server_config_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|root| PathBuf::from(root).join("XanDesk").join("relay-url.txt"))
+}
+
+fn load_saved_server() -> String {
+    server_config_path().and_then(|path| fs::read_to_string(path).ok()).unwrap_or_default().trim().to_owned()
+}
+
+fn save_server(value: &str) {
+    if let Some(path) = server_config_path() {
+        if let Some(parent) = path.parent() { let _ = fs::create_dir_all(parent); }
+        let _ = fs::write(path, value.trim());
+    }
+}
 
 fn random_hex<const N: usize>() -> String {
     let mut bytes = [0; N];
@@ -49,25 +68,57 @@ struct App {
     bitrate: u32,
     allow_clipboard: bool,
     away_access: bool,
+    _tray: Option<TrayIcon>,
+    tray_events: TrayReceiver<String>,
+    open_pair_when_ready: bool,
+    approval_window_opened: bool,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, runtime: tokio::runtime::Runtime) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        let (tray_tx, tray_events) = std_mpsc::channel();
+        let wake_ctx = cc.egui_ctx.clone();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            let _ = tray_tx.send(event.id.0);
+            wake_ctx.request_repaint();
+        }));
+        let pair_item = MenuItem::with_id("pair", "Pair this PC...", true, None);
+        let open_item = MenuItem::with_id("open", "Open XanDesk", true, None);
+        let pause_item = MenuItem::with_id("pause", "Pause (go offline)", true, None);
+        let quit_item = MenuItem::with_id("quit", "Quit XanDesk", true, None);
+        let separator = PredefinedMenuItem::separator();
+        let tray = Menu::with_items(&[&pair_item, &separator, &open_item, &pause_item, &quit_item])
+            .ok()
+            .and_then(|menu| {
+                let mut rgba = vec![0u8; 16 * 16 * 4];
+                for y in 2..14 { for x in 2..14 {
+                    let i = (y * 16 + x) * 4;
+                    rgba[i..i+4].copy_from_slice(&[200, 242, 123, 255]);
+                }}
+                let icon = Icon::from_rgba(rgba, 16, 16).ok()?;
+                TrayIconBuilder::new().with_menu(Box::new(menu)).with_icon(icon)
+                    .with_tooltip("XanDesk — remote PC host").build().ok()
+            });
+        if tray.is_none() { cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true)); }
         Self {
             runtime,
             status: Arc::new(Mutex::new(Status {
-                message: "Ready. Start sharing when you need this PC.".into(),
+                message: "XanDesk is running in the system tray.".into(),
                 ..Default::default()
             })),
             commands: None,
-            server: String::new(),
+            server: load_saved_server(),
             room: String::new(),
             token: String::new(),
             pairing_code: String::new(),
             bitrate: 20,
             allow_clipboard: false,
             away_access: false,
+            _tray: tray,
+            tray_events,
+            open_pair_when_ready: false,
+            approval_window_opened: false,
         }
     }
     fn start(&mut self) {
@@ -110,6 +161,7 @@ impl App {
             .await;
             let mut s = status.lock().unwrap();
             s.running = false;
+            s.registered = false;
             s.pending = false;
             s.capture_fps = 0.0;
             s.encoded_fps = 0.0;
@@ -124,11 +176,58 @@ impl App {
             let _ = tx.send(command);
         }
     }
+
+    fn open_pair_page(&mut self) {
+        let site = std::env::var("XANDESK_SITE_URL")
+            .unwrap_or_else(|_| "https://xandesk.pages.dev".into())
+            .trim_end_matches('/').to_owned();
+        if self.pairing_code.is_empty() { return; }
+        let url = format!("{site}/#/dashboard?pair={}", self.pairing_code);
+        if let Err(error) = webbrowser::open(&url) {
+            self.status.lock().unwrap().message = format!("Could not open XanDesk website: {error}");
+        }
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        while let Ok(event) = self.tray_events.try_recv() {
+            match event.as_str() {
+                "open" => ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true)),
+                "pair" => {
+                    let status = self.status.lock().unwrap();
+                    let running = status.running;
+                    let registered = status.registered;
+                    drop(status);
+                    if running && registered {
+                        self.open_pair_page();
+                    } else {
+                        self.open_pair_when_ready = true;
+                        if !running { self.start(); }
+                    }
+                }
+                "pause" => self.command(Command::Stop),
+                "quit" => { self.command(Command::Stop); ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+                _ => {}
+            }
+        }
+        let (pending, registered, running) = { let s=self.status.lock().unwrap(); (s.pending,s.registered,s.running) };
+        if self.open_pair_when_ready && !running && !registered {
+            self.open_pair_when_ready = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        }
+        if pending {
+            self.approval_window_opened = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        } else if self.approval_window_opened && running {
+            self.approval_window_opened = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        if registered && self.open_pair_when_ready {
+            self.open_pair_when_ready = false;
+            self.open_pair_page();
+        }
         let running = self.status.lock().unwrap().running;
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -136,7 +235,7 @@ impl eframe::App for App {
             ui.horizontal(|ui| { ui.heading(egui::RichText::new("▣ XanDesk").size(30.0).color(egui::Color32::from_rgb(159,230,196))); ui.label("WINDOWS HOST · PREVIEW"); });
             ui.label("Your PC, within reach."); ui.add_space(20.0);
             ui.add_enabled_ui(!running, |ui| {
-                ui.label("XanDesk relay server"); ui.add(egui::TextEdit::singleline(&mut self.server).hint_text("https://relay.your-domain.example").desired_width(f32::INFINITY));
+                ui.label("XanDesk relay server"); if ui.add(egui::TextEdit::singleline(&mut self.server).hint_text("https://relay.your-domain.example").desired_width(f32::INFINITY)).changed() { save_server(&self.server); }
                 ui.label("Enter the public HTTPS relay address for remote access. For a same-PC test, enter http://localhost:8787.");
                 ui.add_space(12.0);
                 ui.add(egui::Slider::new(&mut self.bitrate, 2..=100).suffix(" Mbps").text("Target video bitrate"));
@@ -188,6 +287,7 @@ fn main() -> eframe::Result {
         "XanDesk — Windows host",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
+                .with_visible(false)
                 .with_inner_size([600.0, 580.0])
                 .with_min_inner_size([550.0, 560.0]),
             ..Default::default()

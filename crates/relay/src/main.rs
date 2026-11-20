@@ -124,29 +124,11 @@ async fn connection(mut socket: WebSocket, app: Arc<App>) {
     let (room_id, token, is_host, pairing_code) = match signal {
         Signal::Register { room, token, pairing_code } => (room, token, true, Some(pairing_code)),
         Signal::Join { room, token } => (room, token, false, None),
-        Signal::Pair { pairing_code } => {
-            let Some(code) = normalize_pairing_code(&pairing_code) else { return };
-            let digest: [u8; 32] = Sha256::digest(code.as_bytes()).into();
-            let rooms = app.rooms.lock().await;
-            let room_id = rooms.iter().find_map(|(id, room)| {
-                room.pairing_digest
-                    .as_ref()
-                    .filter(|known| bool::from(known.ct_eq(&digest)))
-                    .map(|_| id.clone())
-            });
-            drop(rooms);
-            let Some(room_id) = room_id else {
-                send(&mut socket, &Signal::Error { message: "Pairing code is invalid or the PC is offline.".into() }).await;
-                return;
-            };
-            (room_id, String::new(), false, Some(code))
-        }
         _ => return,
     };
     let pairing_code_valid = pairing_code.as_ref().and_then(|code| normalize_pairing_code(code)).is_some();
     let has_pairing_code = pairing_code.as_ref().is_some_and(|code| !code.is_empty());
-    if (is_host && has_pairing_code && !pairing_code_valid) ||
-        (!valid_credentials(&room_id, &token) && !(pairing_code_valid && !is_host && token.is_empty())) {
+    if (is_host && has_pairing_code && !pairing_code_valid) || !valid_credentials(&room_id, &token) {
         return;
     }
     let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();

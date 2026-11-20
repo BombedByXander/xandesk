@@ -21,7 +21,6 @@ pub enum Signal {
         pairing_code: String,
     },
     Join { room: String, token: String },
-    Pair { pairing_code: String },
     Registered { ice_servers: Vec<IceServer> },
     Request,
     Approve,

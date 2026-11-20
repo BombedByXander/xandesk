@@ -6,7 +6,7 @@ A separate project from the arcade website in the parent directory. The Windows 
 
 ## Implemented
 
-- Native Windows host with Start/Stop, local approval or opt-in away access, bitrate selection, capture/encode FPS, and a per-run 12-character pairing code.
+- Native Windows host that starts hidden in the system tray, with **Pair this PC**, Open, Pause, and Quit menu actions. Pair this PC starts the host relay connection and opens the owner dashboard with a per-run 12-character code prefilled.
 - Primary-monitor desktop capture and H.264 over encrypted WebRTC.
 - Browser keyboard, mouse, scroll, relative/game mouse, touch pointer, full-screen viewing, and optional browser-to-PC text clipboard.
 - Measured browser decode FPS, incoming video bitrate, WebRTC round-trip time, and received resolution. These are measurements, not advertised targets. Static desktops may report very low FPS.
@@ -16,7 +16,7 @@ A separate project from the arcade website in the parent directory. The Windows 
 
 ## Important parity gaps
 
-This preview does **not** yet implement system audio, virtual game controllers, file transfer, reverse clipboard synchronization, multi-monitor switching, GPU hardware encoding, automatic bandwidth/resolution adaptation, persistent account/device management, MFA, a Windows service, Windows lock/sign-in/UAC secure-desktop control, auto-start, code signing, a signed installer, or automatic updates. It requires an unlocked Windows desktop. By default each connection needs approval at the PC; select **Allow my private pairing link to connect while I’m away** before starting sharing to allow anyone with that PC's active pairing code to connect without another local prompt. Elevated apps and some games may reject synthetic input. Desktop capture currently does not composite a separately rendered hardware cursor.
+This preview does **not** yet implement system audio, virtual game controllers, file transfer, reverse clipboard synchronization, multi-monitor switching, GPU hardware encoding, automatic bandwidth/resolution adaptation, the authenticated account API, persistent account/device enrollment, MFA, a Windows service, Windows lock/sign-in/UAC secure-desktop control, auto-start, code signing, a signed installer, or automatic updates. It requires an unlocked Windows desktop. The account API and host enrollment handshake must be deployed before a pairing code can be claimed to an account or a dashboard session can be authorized. Elevated apps and some games may reject synthetic input. Desktop capture currently does not composite a separately rendered hardware cursor.
 
 These are real engineering tasks, not switches that can be enabled in Cloudflare Pages. DextraDesk's public feature list was reviewed at <https://dextradesk.com/>. XanDesk has its own name and UI and does not reuse DextraDesk branding or code.
 
@@ -31,15 +31,9 @@ cd arcdesk
 
 The resulting `dist` folder contains `XanDesk.exe`, `arcdesk-relay.exe`, and any GNU runtime DLLs. Keep those DLLs alongside the executables. This is a portable unsigned preview, not a signed installer. For a standard MSVC build, `cargo build --release --workspace --locked` also works. No Python, Node, FFmpeg, or Electron runtime is required to run the compiled apps.
 
-## Local test
+## Local setup
 
-1. Run `arcdesk-relay.exe`. It listens only on `127.0.0.1:8787` by default.
-2. Run `XanDesk.exe`, enter `http://localhost:8787` as the relay, and click **Start sharing**.
-3. Enter the 12-character pairing code shown in the host window into the website in Chrome or Edge on the same PC.
-4. Approve the connection in the native host, or opt into away access before starting sharing. The browser displays the desktop. Opening it on the captured monitor creates the expected screen-within-screen effect.
-5. Click **Stop sharing & disconnect** in the host to end access and invalidate the pairing code. Closing the host also ends sharing.
-
-`localhost` on another device refers to that other device. Internet access requires the deployment below. Do not simply copy a localhost invitation to a Chromebook and expect it to connect.
+Run `arcdesk-relay.exe`, open XanDesk from the system tray, and set its relay field to `http://localhost:8787`. The relay is a local development signaling server only. It does not provide the account API needed to claim pairing codes and launch sessions from the dashboard. `localhost` on another device refers to that other device.
 
 ## Cloudflare Pages and backend deployment
 
@@ -60,7 +54,7 @@ Environment variables for `arcdesk-relay`:
 ]
 ```
 
-The default only includes public STUN. **It will not connect through every NAT/firewall.** Provide your own TURN service for restrictive networks and test it from a genuinely separate network. The current config uses static TURN credentials; before opening this as a public service, add authenticated short-lived TURN credentials, per-IP abuse protection at the reverse proxy, operational monitoring, and account authentication. Pairing codes stay active while sharing is active and should be treated as secrets. Hosting and relay bandwidth have infrastructure costs even when your product charges users nothing.
+The default only includes public STUN. **It will not connect through every NAT/firewall.** Provide your own TURN service for restrictive networks and test it from a genuinely separate network. The current config uses static TURN credentials; before opening this as a public service, add authenticated short-lived TURN credentials, per-IP abuse protection at the reverse proxy, operational monitoring, and account authentication. Pairing codes stay active while the host is online and should be treated as secrets. Hosting and relay bandwidth have infrastructure costs even when your product charges users nothing.
 
 Example Caddy configuration:
 
@@ -70,11 +64,11 @@ desk.example.com {
 }
 ```
 
-Set the host's connection server to `https://desk.example.com`. Pairing links will then point to the viewer served by that server. The host initiates outbound signaling and WebRTC connectivity; it does not expose an unauthenticated HTTP input endpoint on the PC.
+Set the host's connection server to `https://desk.example.com`. The host initiates outbound signaling and WebRTC connectivity; it does not expose an unauthenticated HTTP input endpoint on the PC.
 
 ## Cloudflare Pages integration
 
-The XanDesk Pages frontend is in `web/`. Connect the repository with project root `arcdesk/web` and no build command. Configure the Pages variable `XANDESK_RELAY` with the public HTTPS origin of the Rust relay. The Windows host and website must use that same public relay for pairing codes to work across networks. Read [SETUP-PAGES.md](SETUP-PAGES.md) for deployment details and the separate account/device API contract. Persistent account auth, device enrollment, and session authorization endpoints are not implemented by the current Rust relay.
+The XanDesk Pages frontend is in `web/`. Connect the repository with project root `arcdesk/web` and no build command. Set `XANDESK_API` in Pages to the account API origin, and `XANDESK_SITE_URL` on the host to the published Pages URL if it differs from `https://xandesk.pages.dev`. Read [SETUP-PAGES.md](SETUP-PAGES.md) for deployment details and the account/device API contract. Persistent account auth, device enrollment, and session authorization endpoints are not implemented by the current Rust relay.
 
 ## Verification
 

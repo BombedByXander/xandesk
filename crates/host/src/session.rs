@@ -139,7 +139,7 @@ pub async fn run(
                         _=>continue,
                     };
                     match serde_json::from_str::<Signal>(&text)? {
-                        Signal::Registered {ice_servers}=>{ice=ice_servers;status.lock().unwrap().message="PC paired and ready. Enter the pairing code on the XanDesk website.".into();}
+                        Signal::Registered {ice_servers}=>{ice=ice_servers;let mut s=status.lock().unwrap();s.registered=true;s.message="Host online. Choose Pair this PC in the system tray to add it to your account.".into();}
                         Signal::Request=>{
                             if away_access {
                                 approved=true; session_deadline=Some(Instant::now());

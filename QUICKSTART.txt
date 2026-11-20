@@ -1,26 +1,13 @@
 XanDesk Windows preview
 
-1. Keep all EXE and DLL files together in this folder.
-2. Run arcdesk-relay.exe first and leave its console open. It must say it is listening on 127.0.0.1:8787. If this process is not running, XanDesk will report "actively refused" (Windows error 10061).
-3. Run XanDesk.exe with Connection server set to http://localhost:8787, then click Start sharing.
-4. Start sharing; copy the 12-character pairing code shown in the host app.
-5. Open the XanDesk site on the SAME PC for a local test and enter that code.
-6. Approve the connection in the host window.
-7. Stop sharing in the host when finished.
+1. Keep XanDesk.exe, arcdesk-relay.exe, and all DLL files together.
+2. On the host PC, run XanDesk.exe. It starts minimized to the Windows system tray.
+3. Right-click XanDesk in the tray, open the app to configure the relay URL, then Pair this PC... to start the host and open the owner dashboard with the code prefilled.
+4. Sign in, choose Add PC, and submit the code. The account backend must be deployed for this final enrollment step; the Rust preview relay alone does not provide it.
+5. Once a device is enrolled by the account backend, an authorized viewer connects from the dashboard. The host must stay powered on, online, and unlocked.
 
-For another device or internet access, deploy the connection server behind HTTPS
-and configure TURN. A Cloudflare Pages website alone does not run this signaling
-server. Set XanDesk's Connection server to the public HTTPS relay address;
-localhost links only work on the host computer itself. See README.md and
-SETUP-PAGES.md for deployment details.
+For remote access, the host's relay address must be a public HTTPS/WSS endpoint. Cloudflare Pages hosts the website, not the Rust signaling relay. Deploy the relay and account/device/session API separately; configure ARCDESK_ORIGINS to include the Pages origin. See README.md and SETUP-PAGES.md.
 
-To connect while away, select the away-access checkbox BEFORE starting sharing.
-Keep the pairing code secret. Windows must stay awake and unlocked. Stopping
-sharing invalidates the code. This preview does not run as a service.
+To go offline, choose Pause (go offline) from the tray menu. Keep the pairing code private. This preview does not run as a Windows service or start with Windows.
 
-This is an early Rust implementation, not full DextraDesk feature parity.
-Screen video, keyboard/mouse, optional text clipboard, and live FPS are included.
-Audio, controllers, file transfer, account/device login, GPU encoding and
-lock-screen access are not implemented. There are no payment plans or usage timers.
-
-
+This is an early Rust implementation, not full DextraDesk feature parity. Screen video, keyboard/mouse, optional text clipboard, and measured stream FPS are included. Audio, controllers, file transfer, account backend, GPU encoding, and lock-screen access are not implemented.
