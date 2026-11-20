@@ -175,7 +175,9 @@ fn scan_code(code: &str) -> Option<(u16, bool)> {
         "KeyL" => 0x26,
         "Semicolon" => 0x27,
         "Quote" => 0x28,
-        "Backquote" => 0x29,
+        // Treat the browser's backtick key as the Windows key so viewers can
+        // open the remote Start menu even on compact Chromebook keyboards.
+        "Backquote" => return Some((0x5b, true)),
         "ShiftLeft" => 0x2a,
         "Backslash" => 0x2b,
         "KeyZ" => 0x2c,

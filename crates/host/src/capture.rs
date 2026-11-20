@@ -20,11 +20,12 @@ pub struct Frame {
 }
 
 fn encoder(bitrate: u32) -> anyhow::Result<Encoder> {
+    let _ = bitrate;
     // OpenH264's nominal rate is used for encoder rate-control accounting, not pacing.
     // skip_frames(false) submits every selected frame, including timestamps above 120 Hz.
     let config = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(bitrate * 1_000_000))
-        .max_frame_rate(FrameRate::from_hz(60.0))
+        .bitrate(BitRate::from_bps(1_000_000_000))
+        .max_frame_rate(FrameRate::from_hz(1000.0))
         .skip_frames(false)
         .adaptive_quantization(false)
         .background_detection(false)

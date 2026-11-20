@@ -34,10 +34,7 @@ pub enum Command {
 }
 type Shared = Arc<Mutex<Status>>;
 
-fn server_config_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA")
-        .map(|root| PathBuf::from(root).join("XanDesk").join("relay-url.txt"))
-}
+const DEFAULT_RELAY: &str = "https://xandesk.onrender.com";
 
 #[derive(serde::Deserialize, serde::Serialize)]
 struct HostIdentity {
@@ -63,23 +60,6 @@ fn host_identity() -> anyhow::Result<HostIdentity> {
     };
     fs::write(path, serde_json::to_vec(&identity)?)?;
     Ok(identity)
-}
-
-fn load_saved_server() -> String {
-    server_config_path()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
-}
-
-fn save_server(value: &str) {
-    if let Some(path) = server_config_path() {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::write(path, value.trim());
-    }
 }
 
 fn random_hex<const N: usize>() -> String {
@@ -159,7 +139,7 @@ impl App {
                 ..Default::default()
             })),
             commands: None,
-            server: load_saved_server(),
+            server: DEFAULT_RELAY.to_owned(),
             room: String::new(),
             token: String::new(),
             pairing_code: String::new(),
@@ -304,31 +284,44 @@ impl eframe::App for App {
         let running = self.status.lock().unwrap().running;
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(14.0);
-            ui.horizontal(|ui| { ui.heading(egui::RichText::new("▣ XanDesk").size(30.0).color(egui::Color32::from_rgb(159,230,196))); ui.label("WINDOWS HOST · PREVIEW"); });
-            ui.label("Your PC, within reach."); ui.add_space(20.0);
+            ui.add_space(18.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("X").size(22.0).strong().color(egui::Color32::from_rgb(200,242,123)));
+                ui.vertical(|ui| { ui.heading(egui::RichText::new("XanDesk").size(25.0).strong()); ui.label(egui::RichText::new("WINDOWS HOST").size(10.0).color(egui::Color32::from_rgb(155,165,155))); });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (label, color) = if running { ("●  SHARING", egui::Color32::from_rgb(160,235,130)) } else { ("●  OFFLINE", egui::Color32::from_rgb(155,165,155)) };
+                    ui.label(egui::RichText::new(label).size(11.0).strong().color(color));
+                });
+            });
+            ui.add_space(15.0);
+            ui.label(egui::RichText::new("Your PC, ready when you are.").size(15.0).color(egui::Color32::from_rgb(200,206,200)));
+            ui.add_space(18.0);
+            egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(16)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new("CONNECTION").size(10.0).strong().color(egui::Color32::from_rgb(200,242,123)));
+            ui.add_space(7.0);
+            ui.label("XanDesk relay is configured automatically. No server setup needed.");
+            ui.add_space(12.0);
             ui.add_enabled_ui(!running, |ui| {
-                ui.label("XanDesk relay server"); if ui.add(egui::TextEdit::singleline(&mut self.server).hint_text("https://relay.your-domain.example").desired_width(f32::INFINITY)).changed() { save_server(&self.server); }
-                ui.label("Enter the public HTTPS relay address for remote access. For a same-PC test, enter http://localhost:8787.");
-                ui.add_space(12.0);
-                ui.add(egui::Slider::new(&mut self.bitrate, 2..=100).suffix(" Mbps").text("Target video bitrate"));
                 ui.checkbox(&mut self.allow_clipboard, "Allow remote browser to write my text clipboard");
                 ui.checkbox(&mut self.away_access, "Allow my private pairing link to connect while I’m away");
                 if self.away_access { ui.small("Anyone with the active pairing code can control the unlocked PC until you stop sharing."); }
             });
-            ui.add_space(16.0);
+            ui.add_space(8.0);
             if running {
-                if ui.add_sized([ui.available_width(),38.0],egui::Button::new("Stop sharing & disconnect").fill(egui::Color32::from_rgb(105,42,50))).clicked() { self.command(Command::Stop); }
-                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(format!("Pairing code  {}", self.pairing_code)).size(21.0).strong());
                     if ui.button("Copy code").clicked() { ctx.copy_text(self.pairing_code.clone()); }
                 });
                 ui.small("Enter this code on the XanDesk website. It is valid only while sharing is active.");
-            } else if ui.add_sized([ui.available_width(),38.0],egui::Button::new("Start sharing").fill(egui::Color32::from_rgb(31,91,68))).clicked() { self.start(); }
-            ui.add_space(16.0); ui.separator();
+                ui.add_space(10.0);
+                if ui.add_sized([ui.available_width(),38.0],egui::Button::new("Stop sharing").fill(egui::Color32::from_rgb(92,43,43))).clicked() { self.command(Command::Stop); }
+            } else if ui.add_sized([ui.available_width(),42.0],egui::Button::new(egui::RichText::new("Start sharing").strong()).fill(egui::Color32::from_rgb(117,151,57))).clicked() { self.start(); }
+            });
+            ui.add_space(12.0);
             let s = self.status.lock().unwrap();
-            ui.add_space(10.0); ui.label(&s.message);
+            ui.label(egui::RichText::new("ACTIVITY").size(10.0).strong().color(egui::Color32::from_rgb(155,165,155)));
+            ui.add_space(4.0); ui.label(&s.message);
             if s.pending || s.pair_pending {
                 ui.add_space(12.0);
                 if pair_pending {
@@ -339,16 +332,14 @@ impl eframe::App for App {
                     ui.horizontal(|ui| { if ui.button("Allow this session").clicked() { self.command(Command::Approve); } if ui.button("Decline").clicked() { self.command(Command::Reject); } });
                 }
             }
-            ui.add_space(18.0);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.label(format!("Capture  {:.1} FPS",s.capture_fps)); ui.separator();
                 ui.label(format!("Encode  {:.1} FPS",s.encoded_fps)); ui.separator();
                 ui.label(format!("{} × {}",s.dimensions.0,s.dimensions.1));
             });
-            ui.add_space(18.0); ui.separator(); ui.add_space(8.0);
-            ui.small("No subscriptions. No daily timer. No application FPS cap.");
-            ui.small("Primary monitor · Software H.264 · Keyboard / mouse · Optional text clipboard");
-            ui.small("Keep Windows unlocked. Audio, controllers and sign-in-screen access are not in this preview.");
+            ui.add_space(12.0); ui.separator(); ui.add_space(7.0);
+            ui.small("Capture performance follows your display and PC hardware. Keep Windows unlocked for access.");
             });
         });
     }
@@ -366,8 +357,8 @@ fn main() -> eframe::Result {
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_visible(false)
-                .with_inner_size([600.0, 580.0])
-                .with_min_inner_size([550.0, 560.0]),
+                .with_inner_size([520.0, 480.0])
+                .with_min_inner_size([480.0, 440.0]),
             ..Default::default()
         },
         Box::new(move |cc| Ok(Box::new(App::new(cc, runtime)))),
