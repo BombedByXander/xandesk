@@ -26,7 +26,8 @@ fn encoder(bitrate: u32) -> anyhow::Result<Encoder> {
         .bitrate(BitRate::from_bps(bitrate * 1_000_000))
         .max_frame_rate(FrameRate::from_hz(120.0))
         .skip_frames(false)
-        .adaptive_quantization(false)
+        // Preserve fine edges such as UI text with spatial quality adaptation.
+        .adaptive_quantization(true)
         .background_detection(false)
         .profile(Profile::Baseline)
         .usage_type(UsageType::ScreenContentRealTime);
